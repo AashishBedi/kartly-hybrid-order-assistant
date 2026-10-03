@@ -8,6 +8,8 @@ from typing import Any
 
 import httpx
 
+from app.observability import record_llm_call
+
 
 class LLMError(Exception):
     """A safe, short description of an LLM request failure."""
@@ -56,9 +58,16 @@ class LLMClient:
         json_mode: bool = False,
         temperature: float = 0.0,
         max_tokens: int = 500,
+        stage: str | None = None,
     ) -> LLMResponse:
+        started = time.perf_counter()
+        attempts = 0
+        stage_name = stage or "llm"
+
         if not self._api_key:
-            raise LLMError("GROQ_API_KEY is not set")
+            error = LLMError("GROQ_API_KEY is not set")
+            self._record_failure(stage_name, model, started, attempts, error)
+            raise error
 
         body: dict[str, Any] = {
             "model": model,
@@ -69,8 +78,6 @@ class LLMClient:
         if json_mode:
             body["response_format"] = {"type": "json_object"}
 
-        started = time.perf_counter()
-        attempts = 0
         response: httpx.Response | None = None
 
         with httpx.Client(
@@ -90,18 +97,30 @@ class LLMClient:
                     )
                 except httpx.TimeoutException as exc:
                     if attempts > self._max_retries:
-                        raise LLMError("LLM request timed out") from exc
+                        error = LLMError("LLM request timed out")
+                        self._record_failure(
+                            stage_name, model, started, attempts, error
+                        )
+                        raise error from exc
                     self._sleep(self._backoff_delay(attempts))
                     continue
-                except httpx.NetworkError as exc:
+                except httpx.TransportError as exc:
                     if attempts > self._max_retries:
-                        raise LLMError("LLM connection failed") from exc
+                        error = LLMError("LLM connection failed")
+                        self._record_failure(
+                            stage_name, model, started, attempts, error
+                        )
+                        raise error from exc
                     self._sleep(self._backoff_delay(attempts))
                     continue
 
                 if response.status_code == 429 or response.status_code >= 500:
                     if attempts > self._max_retries:
-                        raise LLMError(f"LLM HTTP {response.status_code}")
+                        error = LLMError(f"LLM HTTP {response.status_code}")
+                        self._record_failure(
+                            stage_name, model, started, attempts, error
+                        )
+                        raise error
                     retry_after = (
                         response.headers.get("Retry-After")
                         if response.status_code == 429
@@ -111,19 +130,29 @@ class LLMClient:
                     continue
 
                 if 400 <= response.status_code < 500:
-                    raise LLMError(f"LLM HTTP {response.status_code}")
+                    error = LLMError(f"LLM HTTP {response.status_code}")
+                    self._record_failure(stage_name, model, started, attempts, error)
+                    raise error
 
                 break
 
         if response is None:
-            raise LLMError("LLM request failed")
+            error = LLMError("LLM request failed")
+            self._record_failure(stage_name, model, started, attempts, error)
+            raise error
 
         try:
             payload = response.json()
         except ValueError as exc:
-            raise LLMError("Malformed LLM response") from exc
+            error = LLMError("Malformed LLM response")
+            self._record_failure(stage_name, model, started, attempts, error)
+            raise error from exc
 
-        text = self._extract_content(payload)
+        try:
+            text = self._extract_content(payload)
+        except LLMError as error:
+            self._record_failure(stage_name, model, started, attempts, error)
+            raise
         usage = payload.get("usage")
         if not isinstance(usage, Mapping):
             usage = {}
@@ -138,13 +167,31 @@ class LLMClient:
         if not isinstance(response_model, str) or not response_model:
             response_model = model
 
-        return LLMResponse(
+        result = LLMResponse(
             text=text,
             model=response_model,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             latency_ms=round((time.perf_counter() - started) * 1000),
             cost_usd=cost_usd,
+            attempts=attempts,
+        )
+        record_llm_call(stage_name, result)
+        return result
+
+    @staticmethod
+    def _record_failure(
+        stage: str,
+        model: str,
+        started: float,
+        attempts: int,
+        error: LLMError,
+    ) -> None:
+        record_llm_call(
+            stage,
+            error=error,
+            model=model,
+            latency_ms=round((time.perf_counter() - started) * 1000),
             attempts=attempts,
         )
 
