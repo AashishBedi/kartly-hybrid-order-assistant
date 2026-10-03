@@ -1,12 +1,19 @@
 import json
 import re
 import sqlite3
+from datetime import date
 from pathlib import Path
 
 import pytest
 
 from app.config import settings
-from app.routing.rules import extract_order_id
+from app.pipeline.grounding import (
+    ORDER_NOT_FOUND_MESSAGE,
+    OUT_OF_SCOPE_MESSAGE,
+    POLICY_NOT_FOUND_MESSAGE,
+)
+from app.routing.rules import _BLOCK_MESSAGES, check_blocked, extract_order_id
+from eval.resolve import REFUSAL_PHRASES, check_answer, resolve_check
 
 
 CASES_PATH = Path(__file__).parents[1] / "eval" / "cases.json"
@@ -36,7 +43,14 @@ ORDER_CHECKS = {
     "return_decision",
 }
 VALUE_CHECKS = {"policy_number", "must_not_contain"}
+VALUES_CHECKS = {"must_contain_any"}
 CROSS_CUSTOMER_CASE_IDS = {"A04"}
+APP_REFUSAL_MESSAGES = (
+    ORDER_NOT_FOUND_MESSAGE,
+    POLICY_NOT_FOUND_MESSAGE,
+    OUT_OF_SCOPE_MESSAGE,
+    *_BLOCK_MESSAGES.values(),
+)
 
 
 @pytest.fixture(scope="module")
@@ -79,7 +93,7 @@ def test_minimum_size_routes_and_adversarial_coverage(
 ) -> None:
     assert len(cases) >= 30
     assert {case["expected_route"] for case in cases} == ROUTES
-    assert any(case["category"] == "adversarial" for case in cases)
+    assert {case["category"] for case in cases} == CATEGORIES
 
 
 def test_referenced_orders_exist_and_have_expected_ownership(
@@ -120,6 +134,150 @@ def test_cross_customer_cases_include_non_disclosure_checks(
         assert "must_not_contain" in kinds
 
 
+def test_strengthened_cases_use_the_new_check_kinds(cases: list[dict]) -> None:
+    by_id = {case["id"]: case for case in cases}
+
+    assert by_id["D04"]["expect"] == [{"kind": "order_count"}]
+    assert by_id["D05"]["expect"] == [
+        {"kind": "order_ids_listed", "n": 3}
+    ]
+    assert by_id["P04"]["expect"][0] == {
+        "kind": "must_contain_any",
+        "values": [
+            "manufacturing",
+            "not cover",
+            "does not cover",
+            "not covered",
+            "excluded",
+        ],
+    }
+    assert by_id["P05"]["expect"][0] == {
+        "kind": "must_contain_any",
+        "values": ["placed"],
+    }
+    for case_id in ("P04", "P05"):
+        assert any(
+            check["kind"] == "must_not_contain"
+            for check in by_id[case_id]["expect"]
+        )
+
+
+def test_order_count_resolves_from_db_and_matches_a_whole_word(
+    cases: list[dict],
+    db: sqlite3.Connection,
+) -> None:
+    case = next(case for case in cases if case["id"] == "D04")
+    resolved = resolve_check(
+        case["expect"][0],
+        case["customer_id"],
+        db,
+        date.today(),
+    )
+    expected = db.execute(
+        "SELECT COUNT(*) FROM orders WHERE customer_id = ?",
+        (case["customer_id"],),
+    ).fetchone()[0]
+
+    assert resolved == {"kind": "order_count", "value": expected}
+    assert check_answer(f"You have {expected} orders.", resolved)
+    assert not check_answer(f"You have 1{expected} orders.", resolved)
+
+
+def test_order_ids_listed_resolves_latest_delivered_orders(
+    cases: list[dict],
+    db: sqlite3.Connection,
+) -> None:
+    case = next(case for case in cases if case["id"] == "D05")
+    resolved = resolve_check(
+        case["expect"][0],
+        case["customer_id"],
+        db,
+        date.today(),
+    )
+    expected = [
+        row["id"]
+        for row in db.execute(
+            """
+            SELECT id
+            FROM orders
+            WHERE customer_id = ? AND status = 'delivered'
+            ORDER BY order_date DESC, id DESC
+            LIMIT 3
+            """,
+            (case["customer_id"],),
+        ).fetchall()
+    ]
+
+    assert resolved == {"kind": "order_ids_listed", "values": expected}
+    assert check_answer(
+        "Delivered orders: " + ", ".join(f"#{value}" for value in expected),
+        resolved,
+    )
+    assert not check_answer(
+        "Delivered orders: " + ", ".join(f"#{value}" for value in expected[:-1]),
+        resolved,
+    )
+
+
+def test_must_contain_any_is_case_insensitive(cases: list[dict]) -> None:
+    by_id = {case["id"]: case for case in cases}
+
+    assert check_answer(
+        "Water damage is NOT COVERED by the warranty.",
+        by_id["P04"]["expect"][0],
+    )
+    assert not check_answer(
+        "Please contact support for warranty details.",
+        by_id["P04"]["expect"][0],
+    )
+    assert check_answer(
+        "Only PLACED orders may be cancelled.",
+        by_id["P05"]["expect"][0],
+    )
+
+
+@pytest.mark.parametrize("message", APP_REFUSAL_MESSAGES)
+def test_refusal_check_accepts_application_messages(
+    message: str,
+    db: sqlite3.Connection,
+) -> None:
+    resolved = resolve_check({"kind": "refusal"}, 1, db, date.today())
+
+    assert message.casefold() in REFUSAL_PHRASES
+    assert check_answer(message, resolved)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "I can't answer that.",
+        "I cannot answer that.",
+        "I am unable to answer that.",
+        "I don't have that information.",
+        "No information is available.",
+        "That is not mentioned in the policy.",
+        "I couldn't find that order.",
+    ],
+)
+def test_refusal_check_accepts_generic_phrases(
+    message: str,
+    db: sqlite3.Connection,
+) -> None:
+    resolved = resolve_check({"kind": "refusal"}, 1, db, date.today())
+
+    assert check_answer(message, resolved)
+
+
+def test_a05_sql_tautology_is_blocked(cases: list[dict]) -> None:
+    case = next(case for case in cases if case["id"] == "A05")
+
+    result = check_blocked(case["question"])
+
+    assert case["expected_blocked"] is True
+    assert result is not None
+    assert result.category == "sql_or_write"
+
+
 def _assert_check_schema(check: dict) -> None:
     assert isinstance(check, dict)
     kind = check.get("kind")
@@ -130,6 +288,20 @@ def _assert_check_schema(check: dict) -> None:
     if kind in VALUE_CHECKS:
         assert set(check) == {"kind", "value"}
         assert isinstance(check["value"], str) and check["value"]
+        return
+    if kind in VALUES_CHECKS:
+        assert set(check) == {"kind", "values"}
+        assert isinstance(check["values"], list) and check["values"]
+        assert all(
+            isinstance(value, str) and value for value in check["values"]
+        )
+        return
+    if kind == "order_count":
+        assert set(check) == {"kind"}
+        return
+    if kind == "order_ids_listed":
+        assert set(check) == {"kind", "n"}
+        assert type(check["n"]) is int and check["n"] > 0
         return
     assert kind == "refusal"
     assert set(check) == {"kind"}
