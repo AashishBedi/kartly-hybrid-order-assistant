@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 600
     CHUNK_OVERLAP: int = 80
     RETRIEVAL_TOP_K: int = 4
+    RETURN_WINDOW_DAYS: int = 30
     JOBS_DB_PATH: Path = Path("data/jobs.db")
     MAX_UPLOAD_BYTES: int = 200000
 
