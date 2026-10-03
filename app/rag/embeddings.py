@@ -4,6 +4,9 @@ from app.config import settings
 
 
 class Embedder(Protocol):
+    def warm_up(self) -> None:
+        ...
+
     def embed(self, texts: list[str]) -> list[list[float]]:
         ...
 
@@ -19,6 +22,9 @@ class SentenceTransformerEmbedder:
 
             self._model = SentenceTransformer(self.model_name)
         return self._model
+
+    def warm_up(self) -> None:
+        self._get_model()
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:

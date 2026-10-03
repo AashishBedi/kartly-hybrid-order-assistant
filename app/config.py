@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     CHROMA_PATH: Path = Path("data/chroma")
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    WARMUP_ON_STARTUP: bool = True
     CHUNK_SIZE: int = 600
     CHUNK_OVERLAP: int = 80
     RETRIEVAL_TOP_K: int = 4

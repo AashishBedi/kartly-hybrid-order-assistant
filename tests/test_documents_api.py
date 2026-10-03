@@ -31,6 +31,9 @@ class FakeEmbedder:
         self.calls = 0
         self.should_fail = False
 
+    def warm_up(self) -> None:
+        pass
+
     def embed(self, texts: list[str]) -> list[list[float]]:
         self.calls += 1
         if self.should_fail:

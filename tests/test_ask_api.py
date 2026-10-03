@@ -27,6 +27,9 @@ class FakeEmbedder:
         self.vector = [1.0, 0.0]
         self.calls: list[list[str]] = []
 
+    def warm_up(self) -> None:
+        pass
+
     def embed(self, texts: list[str]) -> list[list[float]]:
         self.calls.append(texts)
         return [self.vector[:] for _ in texts]
