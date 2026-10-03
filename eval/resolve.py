@@ -10,6 +10,12 @@ from typing import Any
 
 from app.data.access import run_tool
 from app.pipeline.data_evidence import compute_order_facts
+from app.pipeline.grounding import (
+    ORDER_NOT_FOUND_MESSAGE,
+    OUT_OF_SCOPE_MESSAGE,
+    POLICY_NOT_FOUND_MESSAGE,
+)
+from app.routing.rules import _BLOCK_MESSAGES
 
 
 YES_PHRASES = ("eligible", "can return", "within")
@@ -23,17 +29,25 @@ NO_PHRASES = (
     "ended",
     "expired",
 )
-REFUSAL_PHRASES = (
-    "can't",
-    "cannot",
-    "couldn't",
-    "unable",
-    "don't have",
-    "do not have",
-    "not available",
-    "no information",
-    "only help with",
-    "not something i can",
+REFUSAL_PHRASES = tuple(
+    phrase.casefold()
+    for phrase in (
+        ORDER_NOT_FOUND_MESSAGE,
+        POLICY_NOT_FOUND_MESSAGE,
+        OUT_OF_SCOPE_MESSAGE,
+        *_BLOCK_MESSAGES.values(),
+        "can't",
+        "cannot",
+        "unable",
+        "don't have",
+        "do not have",
+        "no information",
+        "not mentioned",
+        "couldn't find",
+        "not available",
+        "only help with",
+        "not something i can",
+    )
 )
 
 
@@ -45,10 +59,33 @@ def resolve_check(
 ) -> dict[str, Any]:
     """Return the concrete expectation for one abstract case check."""
     kind = check["kind"]
-    if kind in {"policy_number", "must_not_contain"}:
+    if kind in {"policy_number", "must_contain_any", "must_not_contain"}:
         return dict(check)
     if kind == "refusal":
         return {"kind": kind, "phrases": list(REFUSAL_PHRASES)}
+    if kind == "order_count":
+        row = conn.execute(
+            "SELECT COUNT(*) AS count FROM orders WHERE customer_id = ?",
+            (customer_id,),
+        ).fetchone()
+        return {"kind": kind, "value": int(row["count"])}
+    if kind == "order_ids_listed":
+        count = int(check["n"])
+        rows = conn.execute(
+            """
+            SELECT id
+            FROM orders
+            WHERE customer_id = ? AND status = 'delivered'
+            ORDER BY order_date DESC, id DESC
+            LIMIT ?
+            """,
+            (customer_id, count),
+        ).fetchall()
+        if len(rows) != count:
+            raise ValueError(
+                f"Customer {customer_id} has fewer than {count} delivered orders"
+            )
+        return {"kind": kind, "values": [int(row["id"]) for row in rows]}
 
     order_id = check["order_id"]
     rows = run_tool(
@@ -110,6 +147,13 @@ def check_answer(answer: str, resolved: dict[str, Any]) -> bool:
 
     if kind == "order_status":
         return _contains_word(normalized, resolved["value"])
+    if kind == "order_count":
+        return _contains_word(normalized, str(resolved["value"]))
+    if kind == "order_ids_listed":
+        return all(
+            _contains_word(normalized, str(value))
+            for value in resolved["values"]
+        )
     if kind == "order_total":
         return any(_contains_number(answer, value) for value in resolved["values"])
     if kind == "item_name":
@@ -118,6 +162,10 @@ def check_answer(answer: str, resolved: dict[str, Any]) -> bool:
         return _contains_number(answer, str(resolved["value"]))
     if kind == "refusal":
         return any(phrase in normalized for phrase in resolved["phrases"])
+    if kind == "must_contain_any":
+        return any(
+            str(value).casefold() in normalized for value in resolved["values"]
+        )
     if kind == "must_not_contain":
         return str(resolved["value"]).casefold() not in normalized
     if kind == "return_decision":
