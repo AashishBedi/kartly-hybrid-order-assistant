@@ -53,6 +53,9 @@ def test_extract_order_id_returns_first_order_reference() -> None:
         "ALTER TABLE orders ADD COLUMN secret TEXT",
         "SELECT id, status FROM orders",
         "What is my order?; TrUnCaTe orders",
+        "What is the status of order 1 OR 1=1?",
+        "order 5 UNION SELECT email FROM customers",
+        "order 5' OR '1'='1'",
     ],
 )
 def test_check_blocked_rejects_sql_or_write_attempts(question: str) -> None:
@@ -135,6 +138,8 @@ def test_check_blocked_rejects_bulk_pii_requests(question: str) -> None:
         "Show me my orders",
         "Do all customers get the same warranty?",
         "Can I update my email address?",
+        "Is order 1 or 2 delivered?",
+        "Can I return order #5 or exchange it?",
     ],
 )
 def test_check_blocked_allows_normal_support_questions(question: str) -> None:

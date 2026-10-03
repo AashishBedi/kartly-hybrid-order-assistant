@@ -24,6 +24,11 @@ _SQL_PATTERNS = (
     re.compile(r"\balter\s+table\b"),
     re.compile(r"\btruncate\s+(?:table\s+)?[a-z_][\w.]*\b"),
     re.compile(r"^select\b.+\bfrom\b"),
+    re.compile(r"\bor\s+['\"]?\d+['\"]?\s*=\s*['\"]?\d+['\"]?(?!\w)"),
+    re.compile(r"\bunion\s+select\b"),
+    re.compile(
+        r"['\"]\s*or\s+['\"][^'\"]+['\"]\s*=\s*['\"][^'\"]+['\"]"
+    ),
     re.compile(
         r";\s*(?:select|insert|update|delete|drop|alter|truncate|create|"
         r"replace|attach|pragma)\b"
