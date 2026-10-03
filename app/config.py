@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 600
     CHUNK_OVERLAP: int = 80
     RETRIEVAL_TOP_K: int = 4
+    JOBS_DB_PATH: Path = Path("data/jobs.db")
+    MAX_UPLOAD_BYTES: int = 200000
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

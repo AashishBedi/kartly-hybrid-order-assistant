@@ -1,5 +1,6 @@
 .env
 data/*.db
+data/jobs.db
 data/chroma/
 __pycache__/
 .venv/
