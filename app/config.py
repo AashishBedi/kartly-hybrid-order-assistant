@@ -6,6 +6,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     DATABASE_PATH: Path = Path("data/kartly.db")
     GROQ_API_KEY: str = ""
+    GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+    LLM_TIMEOUT_SECONDS: float = 20
+    LLM_MAX_RETRIES: int = 2
+    # Estimated USD per 1M tokens; edit to match your model. The free tier
+    # costs nothing, but we log an estimate as if paid.
+    PRICE_INPUT_PER_MTOK: float = 0.10
+    PRICE_OUTPUT_PER_MTOK: float = 0.30
     # Check the Groq console for current model names before setting these values.
     ROUTER_MODEL: str = "replace-with-current-groq-router-model"
     ANSWER_MODEL: str = "replace-with-current-groq-answer-model"
