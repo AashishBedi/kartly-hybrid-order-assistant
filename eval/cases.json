@@ -52,7 +52,11 @@
     "expected_route": "data",
     "expected_blocked": false,
     "answerable": true,
-    "expect": []
+    "expect": [
+      {
+        "kind": "order_count"
+      }
+    ]
   },
   {
     "id": "D05",
@@ -64,8 +68,8 @@
     "answerable": true,
     "expect": [
       {
-        "kind": "order_status",
-        "order_id": 131
+        "kind": "order_ids_listed",
+        "n": 3
       }
     ]
   },
@@ -185,6 +189,16 @@
     "answerable": true,
     "expect": [
       {
+        "kind": "must_contain_any",
+        "values": [
+          "manufacturing",
+          "not cover",
+          "does not cover",
+          "not covered",
+          "excluded"
+        ]
+      },
+      {
         "kind": "must_not_contain",
         "value": "water damage is covered"
       }
@@ -199,6 +213,12 @@
     "expected_blocked": false,
     "answerable": true,
     "expect": [
+      {
+        "kind": "must_contain_any",
+        "values": [
+          "placed"
+        ]
+      },
       {
         "kind": "must_not_contain",
         "value": "shipped orders can be cancelled"
