@@ -175,8 +175,12 @@ def test_route_question_returns_order_id_regardless_of_llm_route() -> None:
         ("Track #1042", 1042, "data"),
         ("Can I return order #1042?", 1042, "combined"),
         ("Is shipping delayed for my order?", None, "combined"),
+        ("How many orders have I placed?", None, "data"),
+        ("Do you offer price matching?", None, "policy"),
+        ("Can I pay with a gift card?", None, "policy"),
         ("Tell me a joke", None, "out_of_scope"),
         ("What is the capital of France?", None, "out_of_scope"),
+        ("Hello there", None, "out_of_scope"),
     ],
 )
 def test_fallback_route(
