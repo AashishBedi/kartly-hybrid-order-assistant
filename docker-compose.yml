@@ -11,4 +11,5 @@ services:
       - ./data:/app/data
     command: >
       sh -c "if [ ! -f /app/data/kartly.db ]; then python -m scripts.seed; fi &&
+      python -m scripts.ingest_policies &&
       uvicorn app.main:app --host 0.0.0.0 --port 8000"
