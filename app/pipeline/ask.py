@@ -178,13 +178,50 @@ def _fallback_answer(
     policy_evidence: PolicyEvidence,
 ) -> str:
     sections = []
-    if route in {"data", "combined"}:
+    if route == "combined" and data_evidence.facts:
+        sections.append(_combined_decision_fallback(data_evidence))
+    elif route in {"data", "combined"}:
         sections.append(_data_fallback(data_evidence))
     if route in {"policy", "combined"} and policy_evidence.chunks:
         sections.append(
             f"{_POLICY_FALLBACK_PREFIX} {policy_evidence.chunks[0]['text']}"
         )
     return "\n\n".join(sections)
+
+
+def _combined_decision_fallback(evidence: DataEvidence) -> str:
+    facts = evidence.facts
+    order_id = evidence.rows[0].get("order_id") if evidence.rows else None
+    lead = f"Order {order_id}" if order_id is not None else "Your order"
+    reason = facts["not_returnable_reason"]
+    delivered_date = facts["delivered_date"]
+
+    if reason is not None:
+        if reason == "not delivered yet":
+            return f"{lead} is not returnable because it was {reason}."
+        if reason.startswith("status is "):
+            return f"{lead} is not returnable because its {reason}."
+        return (
+            f"{lead} was delivered on {delivered_date}, so it is not "
+            f"returnable because the {reason}."
+        )
+
+    window_end = facts["return_window_end"]
+    final_sale_items = facts["final_sale_items"]
+    returnable_items = facts["returnable_items"]
+    sentences = [
+        f"{lead} was delivered on {delivered_date}, so it is within the "
+        f"{settings.RETURN_WINDOW_DAYS}-day return window (ends {window_end})."
+    ]
+    if final_sale_items:
+        sentences.append(
+            f"Final-sale items that cannot be returned: "
+            f"{', '.join(final_sale_items)}."
+        )
+    else:
+        sentences.append("There are no final-sale items in this order.")
+    sentences.append(f"Returnable items: {', '.join(returnable_items)}.")
+    return " ".join(sentences)
 
 
 def _data_fallback(evidence: DataEvidence) -> str:

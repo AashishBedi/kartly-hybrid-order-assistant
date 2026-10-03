@@ -1,7 +1,7 @@
 import json
 import sqlite3
 from collections.abc import Mapping, Sequence
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +84,7 @@ def db_connection() -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     delivered_date = date.today().isoformat()
+    old_delivered_date = (date.today() - timedelta(days=31)).isoformat()
 
     with connection:
         connection.executemany(
@@ -93,13 +94,16 @@ def db_connection() -> sqlite3.Connection:
                 (2, "Customer Two", "two@example.com", "2026-01-02"),
             ],
         )
-        connection.execute(
+        connection.executemany(
             """
             INSERT INTO products
                 (id, name, category, price, warranty_months, is_final_sale)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (1, "Everyday Laptop", "electronics", 800.0, 12, 0),
+            [
+                (1, "Everyday Laptop", "electronics", 800.0, 12, 0),
+                (2, "Clearance Mouse", "electronics", 20.0, 0, 1),
+            ],
         )
         connection.executemany(
             """
@@ -111,6 +115,9 @@ def db_connection() -> sqlite3.Connection:
             [
                 (1, 1, "delivered", delivered_date, delivered_date, delivered_date, 800.0, "express"),
                 (2, 2, "delivered", delivered_date, delivered_date, delivered_date, 800.0, "express"),
+                (3, 1, "delivered", old_delivered_date, old_delivered_date, old_delivered_date, 800.0, "standard"),
+                (4, 1, "delivered", delivered_date, delivered_date, delivered_date, 820.0, "express"),
+                (5, 1, "placed", delivered_date, None, None, 800.0, "standard"),
             ],
         )
         connection.executemany(
@@ -119,7 +126,14 @@ def db_connection() -> sqlite3.Connection:
                 (id, order_id, product_id, quantity, unit_price)
             VALUES (?, ?, ?, ?, ?)
             """,
-            [(1, 1, 1, 1, 800.0), (2, 2, 1, 1, 800.0)],
+            [
+                (1, 1, 1, 1, 800.0),
+                (2, 2, 1, 1, 800.0),
+                (3, 3, 1, 1, 800.0),
+                (4, 4, 1, 1, 800.0),
+                (5, 4, 2, 1, 20.0),
+                (6, 5, 1, 1, 800.0),
+            ],
         )
 
     try:
@@ -297,6 +311,64 @@ def test_answer_llm_failure_returns_degraded_fallback(api) -> None:
     assert "Order 1 has status delivered" in body["answer"]
     assert "Everyday Laptop" in body["answer"]
     assert body["sources"]["sql"]
+
+
+@pytest.mark.parametrize(
+    ("order_id", "expected_phrases"),
+    [
+        (
+            1,
+            [
+                "Order 1 was delivered on",
+                "within the 30-day return window",
+                "There are no final-sale items",
+                "Returnable items: Everyday Laptop",
+            ],
+        ),
+        (
+            3,
+            [
+                "Order 3 was delivered on",
+                "not returnable because the return window ended on",
+            ],
+        ),
+        (
+            4,
+            [
+                "Order 4 was delivered on",
+                "within the 30-day return window",
+                "Final-sale items that cannot be returned: Clearance Mouse",
+                "Returnable items: Everyday Laptop",
+            ],
+        ),
+        (
+            5,
+            [
+                "Order 5 is not returnable because it was not delivered yet",
+            ],
+        ),
+    ],
+)
+def test_degraded_combined_answer_states_computed_return_decision(
+    api,
+    order_id: int,
+    expected_phrases: list[str],
+) -> None:
+    client, _, _, llm_client, _ = api
+    llm_client.fail_answer = True
+
+    response = ask(client, f"Can I return order {order_id}?")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["route"] == "combined"
+    assert body["grounded"] is True
+    assert body["degraded"] is True
+    for phrase in expected_phrases:
+        assert phrase in body["answer"]
+    assert body["answer"].index(expected_phrases[0]) < body["answer"].index(
+        "I couldn't generate a full answer"
+    )
 
 
 def test_unknown_customer_returns_404(api) -> None:
