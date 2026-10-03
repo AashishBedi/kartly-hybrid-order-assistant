@@ -3,3 +3,5 @@ uvicorn[standard]==0.37.0
 pydantic-settings==2.11.0
 pytest==8.4.2
 httpx==0.28.1
+chromadb==1.5.9
+sentence-transformers==6.1.0

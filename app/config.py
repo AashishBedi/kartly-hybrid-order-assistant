@@ -10,6 +10,11 @@ class Settings(BaseSettings):
     ROUTER_MODEL: str = "replace-with-current-groq-router-model"
     ANSWER_MODEL: str = "replace-with-current-groq-answer-model"
     LOG_LEVEL: str = "INFO"
+    CHROMA_PATH: Path = Path("data/chroma")
+    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    CHUNK_SIZE: int = 600
+    CHUNK_OVERLAP: int = 80
+    RETRIEVAL_TOP_K: int = 4
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
