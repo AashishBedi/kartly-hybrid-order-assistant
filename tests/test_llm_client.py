@@ -1,6 +1,7 @@
 import json
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -42,6 +43,7 @@ def make_client(
     max_retries: int = 2,
     price_in: float = 1.0,
     price_out: float = 2.0,
+    cache_dir: Path | str = Path("eval/.cache"),
 ) -> LLMClient:
     if waits is None:
         waits = []
@@ -54,7 +56,72 @@ def make_client(
         price_out=price_out,
         transport=httpx.MockTransport(handler),
         sleep=waits.append,
+        cache_dir=cache_dir,
     )
+
+
+def test_eval_cache_miss_then_hit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("EVAL_CACHE", "1")
+    request_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        return llm_response(text="cached", prompt_tokens=12, completion_tokens=3)
+
+    client = make_client(handler, cache_dir=tmp_path)
+    messages = [{"role": "user", "content": "hello"}]
+
+    miss = client.chat(MODEL, messages)
+    hit = client.chat(MODEL, messages)
+
+    assert request_count == 1
+    assert miss.cache_hit is False
+    assert hit.cache_hit is True
+    assert hit.text == miss.text
+    assert hit.prompt_tokens == miss.prompt_tokens
+    assert hit.completion_tokens == miss.completion_tokens
+    assert hit.latency_ms == miss.latency_ms
+    assert len(list(tmp_path.glob("*.json"))) == 1
+
+
+def test_eval_cache_is_off_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("EVAL_CACHE", raising=False)
+    request_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        return llm_response()
+
+    client = make_client(handler, cache_dir=tmp_path)
+    client.chat(MODEL, [])
+    client.chat(MODEL, [])
+
+    assert request_count == 2
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_failed_calls_are_not_cached(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("EVAL_CACHE", "1")
+    client = make_client(
+        lambda request: httpx.Response(401),
+        cache_dir=tmp_path,
+    )
+
+    with pytest.raises(LLMError, match="LLM HTTP 401"):
+        client.chat(MODEL, [])
+
+    assert not tmp_path.exists() or list(tmp_path.iterdir()) == []
 
 
 def test_success_returns_text_usage_latency_and_cost(

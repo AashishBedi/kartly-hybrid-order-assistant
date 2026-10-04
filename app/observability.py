@@ -54,6 +54,7 @@ def record_llm_call(
     completion_tokens: int = 0,
     cost_usd: float = 0.0,
     attempts: int = 0,
+    cache_hit: bool = False,
 ) -> None:
     metrics = _current_metrics.get()
     if metrics is None:
@@ -66,6 +67,7 @@ def record_llm_call(
         completion_tokens = response.completion_tokens
         cost_usd = response.cost_usd
         attempts = response.attempts
+        cache_hit = response.cache_hit
 
     metrics.llm_calls.append(
         {
@@ -76,6 +78,7 @@ def record_llm_call(
             "completion_tokens": completion_tokens,
             "cost_usd": cost_usd,
             "attempts": attempts,
+            "cache_hit": cache_hit,
             "ok": response is not None and error is None,
         }
     )

@@ -41,7 +41,7 @@ The service must answer correctly, show where each answer came from, keep every 
 - **Async ingestion:** upload policy documents through a background job, and replace an updated document with no duplicate or outdated chunks.
 - **Safe data access:** read-only database access, a customer can only see their own orders, and bulk-data or write attempts are blocked even if the language model is fooled.
 - **Grounded answers:** if the data or policies do not support an answer, say so.
-- **Measured quality:** compare the hybrid system against a vector-only baseline on a labelled question set.
+- **Measured quality:** compare the hybrid system against an LLM-only baseline on a labelled question set.
 - **Reliability and observability:** timeouts, retries, a clear fallback on failure, and per-request logs of latency, tokens and estimated cost.
 
 ## 3. Tech Stack
@@ -273,7 +273,7 @@ flowchart LR
 ```
 
 **Evaluation harness**
-- Labelled question set, vector-only baseline, runner that saves raw outputs, and separate judging so results can be re-judged without new LLM calls.
+- Labelled question set, LLM-only baseline, runner that saves raw outputs, and separate judging so results can be re-judged without new LLM calls.
 
 ## 6. Challenges Faced
 
@@ -317,7 +317,7 @@ pytest -q
 
 **Systems compared.**
 - **Hybrid:** the full `/ask` pipeline.
-- **Vector-only baseline:** same embedder, same store, same answer model and settings, but **no SQL access, no router, no relevance threshold and no customer ID**. It answers from the top policy chunks only.
+- **LLM-only baseline:** the same answer model with a generic support prompt, but **no retrieval, SQL tools, router or customer ID**. It makes exactly one model call per question.
 
 **How each answer was judged.** Rule-based checks, no model judge: [FILL: confirm after judging is built]
 - order status, total and item names must appear in the answer
@@ -332,7 +332,7 @@ pytest -q
 | System | Answer correctness | Unsupported-answer rate | Route accuracy | Avg latency | Avg cost / request |
 |---|---|---|---|---|---|
 | Hybrid | [FILL] | [FILL] | [FILL] | [FILL] | [FILL] |
-| Vector-only baseline | [FILL] | [FILL] | n/a | [FILL] | [FILL] |
+| LLM-only baseline | [FILL] | [FILL] | n/a | [FILL] | [FILL] |
 
 | Category | Hybrid correct | Baseline correct |
 |---|---|---|

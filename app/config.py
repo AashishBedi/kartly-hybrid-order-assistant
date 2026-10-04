@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
     LLM_TIMEOUT_SECONDS: float = 20
     LLM_MAX_RETRIES: int = 2
+    EVAL_CACHE: str = "0"
     # Estimated USD per 1M tokens; edit to match your model. The free tier
     # costs nothing, but we log an estimate as if paid.
     PRICE_INPUT_PER_MTOK: float = 0.10

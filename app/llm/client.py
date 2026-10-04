@@ -1,10 +1,15 @@
+import hashlib
+import json
+import os
 import random
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import httpx
 
@@ -28,6 +33,7 @@ class LLMResponse:
     latency_ms: int
     cost_usd: float
     attempts: int
+    cache_hit: bool = False
 
 
 class LLMClient:
@@ -41,6 +47,8 @@ class LLMClient:
         price_out: float,
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        cache_dir: Path | str = Path("eval/.cache"),
+        cache_enabled: bool | None = None,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
@@ -50,6 +58,12 @@ class LLMClient:
         self._price_out = price_out
         self._transport = transport
         self._sleep = sleep
+        self._cache_dir = Path(cache_dir)
+        self._cache_enabled = (
+            os.getenv("EVAL_CACHE") == "1"
+            if cache_enabled is None
+            else cache_enabled
+        )
 
     def chat(
         self,
@@ -64,11 +78,6 @@ class LLMClient:
         attempts = 0
         stage_name = stage or "llm"
 
-        if not self._api_key:
-            error = LLMError("GROQ_API_KEY is not set")
-            self._record_failure(stage_name, model, started, attempts, error)
-            raise error
-
         body: dict[str, Any] = {
             "model": model,
             "messages": list(messages),
@@ -77,6 +86,18 @@ class LLMClient:
         }
         if json_mode:
             body["response_format"] = {"type": "json_object"}
+
+        cache_path = self._cache_path(body)
+        if cache_path is not None:
+            cached = self._read_cache(cache_path, model)
+            if cached is not None:
+                record_llm_call(stage_name, cached)
+                return cached
+
+        if not self._api_key:
+            error = LLMError("GROQ_API_KEY is not set")
+            self._record_failure(stage_name, model, started, attempts, error)
+            raise error
 
         response: httpx.Response | None = None
 
@@ -176,8 +197,88 @@ class LLMClient:
             cost_usd=cost_usd,
             attempts=attempts,
         )
+        if cache_path is not None:
+            self._write_cache(cache_path, result)
         record_llm_call(stage_name, result)
         return result
+
+    def _cache_path(self, body: Mapping[str, Any]) -> Path | None:
+        if not self._cache_enabled:
+            return None
+        serialized = json.dumps(
+            body,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        key = hashlib.sha256(serialized).hexdigest()
+        return self._cache_dir / f"{key}.json"
+
+    def _read_cache(self, path: Path, requested_model: str) -> LLMResponse | None:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(payload, Mapping) or payload.get("ok") is not True:
+            return None
+        try:
+            text = payload["text"]
+            model = payload.get("model", requested_model)
+            prompt_tokens = payload["prompt_tokens"]
+            completion_tokens = payload["completion_tokens"]
+            latency_ms = payload["latency_ms"]
+            cost_usd = payload["cost_usd"]
+            attempts = payload["attempts"]
+        except KeyError:
+            return None
+        if not isinstance(text, str) or not isinstance(model, str):
+            return None
+        if not all(
+            isinstance(value, int) and value >= 0
+            for value in (prompt_tokens, completion_tokens, latency_ms, attempts)
+        ):
+            return None
+        if not isinstance(cost_usd, (int, float)) or cost_usd < 0:
+            return None
+        return LLMResponse(
+            text=text,
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            latency_ms=latency_ms,
+            cost_usd=float(cost_usd),
+            attempts=attempts,
+            cache_hit=True,
+        )
+
+    @staticmethod
+    def _write_cache(path: Path, response: LLMResponse) -> None:
+        payload = {
+            "ok": True,
+            "text": response.text,
+            "model": response.model,
+            "prompt_tokens": response.prompt_tokens,
+            "completion_tokens": response.completion_tokens,
+            "latency_ms": response.latency_ms,
+            "cost_usd": response.cost_usd,
+            "attempts": response.attempts,
+        }
+        temporary_path: Path | None = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+            temporary_path.write_text(
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                encoding="utf-8",
+            )
+            temporary_path.replace(path)
+        except OSError:
+            # The eval cache is an optimization and must never break a request.
+            try:
+                if temporary_path is not None:
+                    temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     @staticmethod
     def _record_failure(

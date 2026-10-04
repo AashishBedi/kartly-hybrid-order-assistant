@@ -5,6 +5,7 @@ data/chroma/
 __pycache__/
 .venv/
 .pytest_cache/
+eval/.cache/
 *.pyc
 
 !data/.gitkeep
