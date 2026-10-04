@@ -38,6 +38,7 @@ class FakeEmbedder:
 class FakeLLMClient:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.fail_router = False
         self.fail_answer = False
 
     def chat(
@@ -54,6 +55,8 @@ class FakeLLMClient:
         self.calls.append(call)
         stage = kwargs.get("stage")
 
+        if stage == "router" and self.fail_router:
+            raise LLMError("router unavailable")
         if stage == "answer":
             if self.fail_answer:
                 raise LLMError("answer unavailable")
@@ -287,6 +290,7 @@ def test_blocked_questions_skip_data_and_all_llm_calls(
     question: str,
 ) -> None:
     client, _, embedder, llm_client, connection = api
+    llm_client.fail_router = True
     sql_statements: list[str] = []
     connection.set_trace_callback(sql_statements.append)
 
@@ -327,6 +331,23 @@ def test_irrelevant_policy_is_ungrounded_without_answer_call(api) -> None:
     assert body["route"] == "policy"
     assert body["grounded"] is False
     assert body["sources"] == {"sql": [], "chunks": []}
+    assert answer_calls(llm_client) == []
+
+
+def test_router_error_sends_unmatched_question_through_policy_gate(api) -> None:
+    client, _, embedder, llm_client, _ = api
+    llm_client.fail_router = True
+    embedder.vector = [-1.0, 0.0]
+
+    response = ask(client, "What is the capital of France?")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["route"] == "policy"
+    assert body["grounded"] is False
+    assert "don't have a Kartly policy" in body["answer"]
+    assert body["sources"] == {"sql": [], "chunks": []}
+    assert embedder.calls == [["What is the capital of France?"]]
     assert answer_calls(llm_client) == []
 
 

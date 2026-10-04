@@ -140,7 +140,7 @@ def fallback_route(question: str, order_id: int | None) -> Route:
         return "data"
     if has_policy_word:
         return "policy"
-    return "out_of_scope"
+    return "policy"
 
 
 def _fallback_decision(

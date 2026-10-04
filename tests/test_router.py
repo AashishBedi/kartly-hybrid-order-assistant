@@ -149,6 +149,20 @@ def test_route_question_uses_fallback_when_llm_raises() -> None:
     assert decision.fallback_used is True
 
 
+def test_router_error_defaults_unmatched_question_to_policy() -> None:
+    client = FakeLLMClient(error=LLMError("service unavailable"))
+
+    decision = route_question(
+        "How quickly must I report an item that arrived damaged?",
+        client,
+        "router-model",
+    )
+
+    assert decision.route == "policy"
+    assert decision.reason == "llm_error"
+    assert decision.fallback_used is True
+
+
 def test_route_question_returns_order_id_regardless_of_llm_route() -> None:
     client = FakeLLMClient(
         text='{"route": "policy", "reason": "policy question"}'
@@ -178,9 +192,9 @@ def test_route_question_returns_order_id_regardless_of_llm_route() -> None:
         ("How many orders have I placed?", None, "data"),
         ("Do you offer price matching?", None, "policy"),
         ("Can I pay with a gift card?", None, "policy"),
-        ("Tell me a joke", None, "out_of_scope"),
-        ("What is the capital of France?", None, "out_of_scope"),
-        ("Hello there", None, "out_of_scope"),
+        ("Tell me a joke", None, "policy"),
+        ("What is the capital of France?", None, "policy"),
+        ("Hello there", None, "policy"),
     ],
 )
 def test_fallback_route(
