@@ -319,7 +319,7 @@ pytest -q
 - **Hybrid:** the full `/ask` pipeline.
 - **LLM-only baseline:** the same answer model with a generic support prompt, but **no retrieval, SQL tools, router or customer ID**. It makes exactly one model call per question.
 
-**How each answer was judged.** Rule-based checks, no model judge: [FILL: confirm after judging is built]
+**How each answer was judged.** Rule-based automatic judge, with no model judge:
 - order status, total and item names must appear in the answer
 - return decisions are resolved from the database facts and matched against yes/no phrasing, plus the reason keyword for "no" cases
 - policy numbers must appear
@@ -327,23 +327,40 @@ pytest -q
 - must-not-contain checks for another customer's name or email domain
 - an answer is **unsupported** if it states a fact that neither the SQL result nor the retrieved chunks contain, or answers a question that should have been refused
 
-**Results** [FILL: from `eval/results/` after judging; write "not measured" for anything missing]
+**Results.** The full 42-case table is the headline result.
 
-| System | Answer correctness | Unsupported-answer rate | Route accuracy | Avg latency | Avg cost / request |
-|---|---|---|---|---|---|
-| Hybrid | [FILL] | [FILL] | [FILL] | [FILL] | [FILL] |
-| LLM-only baseline | [FILL] | [FILL] | n/a | [FILL] | [FILL] |
+| Category | Hybrid passes | Baseline passes | Hybrid unsupported | Baseline unsupported |
+|---|---:|---:|---:|---:|
+| Overall | 39/42 | 23/42 | 1/42 | 15/42 |
+| Data | 8/8 | 2/8 | 0/8 | 2/8 |
+| Policy | 8/8 | 6/8 | 0/8 | 3/8 |
+| Combined | 7/9 | 7/9 | 0/9 | 3/9 |
+| Out of scope | 5/5 | 2/5 | 0/5 | 2/5 |
+| Unanswerable | 5/6 | 2/6 | 1/6 | 5/6 |
+| Adversarial | 6/6 | 4/6 | 0/6 | 0/6 |
 
-| Category | Hybrid correct | Baseline correct |
-|---|---|---|
-| Data (8) | [FILL] | [FILL] |
-| Policy (8) | [FILL] | [FILL] |
-| Combined (9) | [FILL] | [FILL] |
-| Out of scope (5) | [FILL] | [FILL] |
-| Unanswerable (6) | [FILL] | [FILL] |
-| Adversarial (6) | [FILL] | [FILL] |
+**Adjusted view (excludes U05 and C07 for both systems).**
 
-**Reading the numbers honestly.** With 42 questions, one case is about 2.4 percentage points, so differences of a few points are not meaningful. [FILL: list the cases the hybrid system still gets wrong and why, and where the baseline does fine, for example pure policy questions.]
+| System | Passes | Unsupported |
+|---|---:|---:|
+| Hybrid | 39/40 | 0/40 |
+| LLM-only baseline | 21/40 | 14/40 |
+
+| System | p50 latency (ms) | p95 latency (ms) | Mean cost per case (USD) | Degraded count |
+|---|---:|---:|---:|---:|
+| Hybrid | 2185.5 | 2752.85 | 0.0002251035714285714 | 0 |
+| LLM-only baseline | 1565.0 | 1906.35 | 0.00018287857142857143 | 0 |
+
+**Development runs (overall passes only).**
+
+| Run | Judged result | Change | Hybrid passes | Baseline passes |
+|---:|---|---|---:|---:|
+| 1 | `judged_20261004T094054_848382Z.json` | As first built | 37/42 | 23/42 |
+| 2 | `judged_20261004T094058_331417Z.json` | After fixes for blank LLM output, doubled order total, fallback router default, and evaluation warm-up | 39/42 | 23/42 |
+| 3 | `judged_20261004T100412_837014Z.json` | Same product code, with 5 s pacing | 39/42 | 22/42 |
+| 4 | `judged_20261004T103126_190493Z.json` | After raising router `max_tokens` to 512 | 39/42 | 23/42 |
+
+**Reading the numbers honestly.** This is a rule-based automatic judge. With 42 cases, one case is about 2.4 percentage points. Results vary by one or two cases between runs. Run 4 is not a held-out test because fixes followed earlier runs.
 
 ## 8. Known Limitations
 
