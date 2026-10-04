@@ -5,8 +5,10 @@ from typing import Any
 
 import pytest
 
+from eval import judge
 from eval.judge import (
     _claims_from_rows,
+    build_parser,
     extract_claims,
     judge_file,
     normalize_text,
@@ -174,6 +176,95 @@ def test_judge_records_pass_fail_unsupported_error_and_summary(
         row for row in rows if row["id"] == "S4" and row["system"] == "hybrid"
     )
     assert error_row["auto_verdict"] == "error"
+
+
+def test_adjusted_summary_excludes_ids_for_both_systems_without_changing_full(
+    synthetic_raw: Path,
+    tmp_path: Path,
+) -> None:
+    results_dir = tmp_path / "results"
+    full_path, _ = judge_file(
+        synthetic_raw,
+        results_dir=results_dir,
+        timestamp="20261004T120000_000000Z",
+    )
+    adjusted_path, _ = judge_file(
+        synthetic_raw,
+        results_dir=results_dir,
+        timestamp="20261004T120001_000000Z",
+        exclude_ids=["S1", "S3"],
+        exclude_reason="Known ambiguous prompts",
+    )
+
+    full = json.loads(full_path.read_text(encoding="utf-8"))
+    adjusted = json.loads(adjusted_path.read_text(encoding="utf-8"))
+
+    assert adjusted["summary"] == full["summary"]
+    adjusted_summary = adjusted["adjusted_summary"]
+    assert adjusted_summary["excluded_case_ids"] == ["S1", "S3"]
+    assert adjusted_summary["exclude_reason"] == "Known ambiguous prompts"
+    assert adjusted_summary["overall"]["hybrid"]["passes"] == "1/2"
+    assert adjusted_summary["overall"]["hybrid"][
+        "unsupported_claim_rate"
+    ] == "0/2"
+    assert adjusted_summary["overall"]["baseline"]["passes"] == "0/2"
+    assert adjusted_summary["overall"]["baseline"][
+        "unsupported_claim_rate"
+    ] == "1/2"
+
+
+def test_exclude_cli_accepts_comma_separated_case_ids() -> None:
+    args = build_parser().parse_args(
+        ["raw.jsonl", "--exclude", "U05,D03", "--exclude-reason", "Review"]
+    )
+
+    assert args.exclude == "U05,D03"
+    assert args.exclude_reason == "Review"
+
+
+def test_cli_prints_full_and_adjusted_summary_tables(
+    synthetic_raw: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    judged_path, review_path = judge_file(
+        synthetic_raw,
+        results_dir=tmp_path / "results",
+        timestamp="20261004T120002_000000Z",
+        exclude_ids=["S1"],
+        exclude_reason="Review",
+    )
+
+    def fake_judge_file(
+        raw_path: Path,
+        **kwargs: Any,
+    ) -> tuple[Path, Path]:
+        assert raw_path == synthetic_raw
+        assert kwargs["exclude_ids"] == ["S1"]
+        assert kwargs["exclude_reason"] == "Review"
+        return judged_path, review_path
+
+    monkeypatch.setattr(judge, "judge_file", fake_judge_file)
+
+    assert judge.main(
+        [
+            str(synthetic_raw),
+            "--exclude",
+            "S1",
+            "--exclude-reason",
+            "Review",
+        ]
+    ) == 0
+
+    output = capsys.readouterr().out
+    assert "Full summary\n" in output
+    assert "Adjusted summary\n" in output
+    assert "category" in output
+    assert "hybrid passes" in output
+    assert "baseline unsupported" in output
+    assert "overall" in output
+    assert "data" in output
 
 
 def test_claim_extraction_returns_exact_tokens() -> None:

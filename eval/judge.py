@@ -254,9 +254,12 @@ def judge_file(
     connection: Any | None = None,
     store: PolicyStore | None = None,
     timestamp: str | None = None,
+    exclude_ids: Iterable[str] | None = None,
+    exclude_reason: str | None = None,
 ) -> tuple[Path, Path]:
     """Judge one raw JSONL file and write JSON plus a manual-review CSV."""
     records = _read_jsonl(raw_path)
+    excluded_case_ids = _normalize_case_ids(exclude_ids or [])
     evidence = EvidenceContext(
         connection=connection,
         store=store,
@@ -298,6 +301,20 @@ def judge_file(
         "cases": verdicts,
         "summary": _build_summary(records, verdicts),
     }
+    if excluded_case_ids:
+        excluded = set(excluded_case_ids)
+        adjusted_pairs = [
+            (record, verdict)
+            for record, verdict in zip(records, verdicts)
+            if str(record.get("case_id", record.get("id"))) not in excluded
+        ]
+        adjusted_records = [record for record, _ in adjusted_pairs]
+        adjusted_verdicts = [verdict for _, verdict in adjusted_pairs]
+        payload["adjusted_summary"] = {
+            "excluded_case_ids": excluded_case_ids,
+            "exclude_reason": exclude_reason,
+            **_build_summary(adjusted_records, adjusted_verdicts),
+        }
     judged_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -711,19 +728,95 @@ def _deduplicate_strings(values: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(value for value in values if value))
 
 
+def _normalize_case_ids(values: Iterable[str]) -> list[str]:
+    return list(
+        dict.fromkeys(
+            case_id
+            for value in values
+            for item in str(value).split(",")
+            if (case_id := item.strip())
+        )
+    )
+
+
+def _format_summary_table(title: str, summary: dict[str, Any]) -> str:
+    headers = (
+        "category",
+        "hybrid passes",
+        "hybrid unsupported",
+        "baseline passes",
+        "baseline unsupported",
+    )
+    rows = [
+        (
+            "overall",
+            summary["overall"]["hybrid"]["passes"],
+            summary["overall"]["hybrid"]["unsupported_claim_rate"],
+            summary["overall"]["baseline"]["passes"],
+            summary["overall"]["baseline"]["unsupported_claim_rate"],
+        ),
+        *(
+            (
+                category,
+                systems["hybrid"]["passes"],
+                systems["hybrid"]["unsupported_claim_rate"],
+                systems["baseline"]["passes"],
+                systems["baseline"]["unsupported_claim_rate"],
+            )
+            for category, systems in summary["categories"].items()
+        ),
+    ]
+    widths = [
+        max(len(str(value)) for value in (header, *(row[index] for row in rows)))
+        for index, header in enumerate(headers)
+    ]
+
+    def format_row(row: Sequence[str]) -> str:
+        return " | ".join(
+            value.ljust(width) for value, width in zip(row, widths)
+        ).rstrip()
+
+    divider = "-+-".join("-" * width for width in widths)
+    return "\n".join(
+        (title, format_row(headers), divider, *(format_row(row) for row in rows))
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Judge raw Kartly evaluation results without model calls."
     )
     parser.add_argument("raw_file", type=Path)
+    parser.add_argument(
+        "--exclude",
+        default="",
+        help="Comma-separated case IDs to omit from an adjusted summary.",
+    )
+    parser.add_argument(
+        "--exclude-reason",
+        help="Reason recorded alongside the adjusted summary.",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    judged_path, review_path = judge_file(args.raw_file)
+    excluded_case_ids = _normalize_case_ids([args.exclude])
+    judged_path, review_path = judge_file(
+        args.raw_file,
+        exclude_ids=excluded_case_ids,
+        exclude_reason=args.exclude_reason,
+    )
     print(judged_path)
     print(review_path)
+    payload = json.loads(judged_path.read_text(encoding="utf-8"))
+    print(_format_summary_table("Full summary", payload["summary"]))
+    if "adjusted_summary" in payload:
+        print(
+            _format_summary_table(
+                "Adjusted summary", payload["adjusted_summary"]
+            )
+        )
     return 0
 
 
