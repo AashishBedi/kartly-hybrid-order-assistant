@@ -228,6 +228,35 @@ def test_combined_question_passes_computed_facts_and_both_sources(api) -> None:
     assert answer_call["max_tokens"] == 400
 
 
+def test_two_item_order_total_appears_once_with_separate_items(api) -> None:
+    client, _, _, llm_client, _ = api
+
+    response = ask(client, "Where is order 4?")
+
+    assert response.status_code == 200
+    answer_call = answer_calls(llm_client)[0]
+    user_evidence = answer_call["messages"][1]["content"]
+    serialized_evidence = user_evidence.split("Order evidence (JSON):\n", 1)[1]
+    evidence = json.loads(serialized_evidence)
+
+    assert user_evidence.count('"total": 820.0') == 1
+    assert evidence["order"]["total"] == 820.0
+    assert evidence["items"] == [
+        {
+            "name": "Everyday Laptop",
+            "quantity": 1,
+            "unit_price": 800.0,
+            "line_total": 800.0,
+        },
+        {
+            "name": "Clearance Mouse",
+            "quantity": 1,
+            "unit_price": 20.0,
+            "line_total": 20.0,
+        },
+    ]
+
+
 def test_out_of_scope_question_skips_evidence_and_answer_llm(api) -> None:
     client, _, embedder, llm_client, connection = api
     sql_statements: list[str] = []
