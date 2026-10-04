@@ -1,4 +1,5 @@
 import sqlite3
+from collections.abc import Callable
 from datetime import date
 from typing import Any
 from uuid import uuid4
@@ -34,6 +35,7 @@ def handle_ask(
     answer_model: str = settings.ANSWER_MODEL,
     top_k: int = settings.RETRIEVAL_TOP_K,
     max_distance: float = settings.RELEVANCE_MAX_DISTANCE,
+    metrics_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Run the routed, evidence-grounded ask pipeline."""
     request_id = str(uuid4())
@@ -117,7 +119,9 @@ def handle_ask(
             policy_evidence=policy_evidence,
         )
     finally:
-        finish_request()
+        metrics = finish_request()
+        if metrics_sink is not None:
+            metrics_sink(metrics)
 
 
 def _empty_data_evidence() -> DataEvidence:

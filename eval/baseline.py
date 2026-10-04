@@ -4,14 +4,20 @@ from typing import Any
 
 from app.config import settings
 from app.deps import get_llm_client
+from app.llm.client import LLMClient
 
 
 _SYSTEM_PROMPT = "You are a customer support assistant for Kartly, an online store."
 
 
-def answer_baseline(question: str) -> dict[str, Any]:
+def answer_baseline(
+    question: str,
+    *,
+    llm_client: LLMClient | None = None,
+) -> dict[str, Any]:
     """Answer a question with one LLM call and no Kartly context or tools."""
-    response = get_llm_client().chat(
+    client = llm_client if llm_client is not None else get_llm_client()
+    response = client.chat(
         settings.ANSWER_MODEL,
         [
             {"role": "system", "content": _SYSTEM_PROMPT},

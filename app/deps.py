@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from collections.abc import Generator
 from functools import lru_cache
@@ -34,7 +35,7 @@ def get_llm_client() -> LLMClient:
         max_retries=settings.LLM_MAX_RETRIES,
         price_in=settings.PRICE_INPUT_PER_MTOK,
         price_out=settings.PRICE_OUTPUT_PER_MTOK,
-        cache_enabled=settings.EVAL_CACHE == "1",
+        cache_enabled=os.getenv("EVAL_CACHE", settings.EVAL_CACHE) == "1",
     )
 
 
