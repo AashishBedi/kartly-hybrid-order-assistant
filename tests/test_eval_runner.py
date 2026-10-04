@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -244,3 +245,70 @@ def test_case_filters_apply_before_limit() -> None:
     )
 
     assert selected == [cases[1]]
+
+
+def test_progress_uses_stderr_and_stdout_only_contains_output_path(
+    runner_setup: tuple[Path, Path, FakeLLMClient, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cases_path, results_dir, _, _ = runner_setup
+    real_run_evaluation = run_eval.run_evaluation
+    output_paths: list[Path] = []
+
+    def run_with_test_paths(**kwargs: Any) -> Path:
+        output_path = real_run_evaluation(
+            **kwargs,
+            cases_path=cases_path,
+            results_dir=results_dir,
+        )
+        output_paths.append(output_path)
+        return output_path
+
+    monkeypatch.setattr(run_eval, "run_evaluation", run_with_test_paths)
+
+    exit_code = run_eval.main(["--limit", "1", "--sleep", "0"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.out == f"{output_paths[0]}\n"
+    lines = captured.err.splitlines()
+    assert lines[0] == "[1/1] R1 starting"
+    assert re.fullmatch(
+        r"\[1/1] R1 data hybrid=ok \d+\.\d{2}s "
+        r"baseline=ok \d+\.\d{2}s cache_hits=0",
+        lines[1],
+    )
+
+
+def test_interrupt_reports_partial_file_and_resume_command(
+    runner_setup: tuple[Path, Path, FakeLLMClient, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cases_path, results_dir, _, _ = runner_setup
+    real_run_evaluation = run_eval.run_evaluation
+
+    def run_with_test_paths(**kwargs: Any) -> Path:
+        return real_run_evaluation(
+            **kwargs,
+            cases_path=cases_path,
+            results_dir=results_dir,
+        )
+
+    def interrupt_case(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(run_eval, "run_evaluation", run_with_test_paths)
+    monkeypatch.setattr(run_eval, "_evaluate_case", interrupt_case)
+
+    exit_code = run_eval.main(["--limit", "1", "--sleep", "0"])
+
+    captured = capsys.readouterr()
+    output_files = list(results_dir.glob("raw_*.jsonl"))
+    assert exit_code == 130
+    assert captured.out == ""
+    assert "[1/1] R1 starting" in captured.err
+    assert f"Raw results: {output_files[0]}" in captured.err
+    assert f"--resume {output_files[0]}" in captured.err
+    assert output_files[0].read_text(encoding="utf-8") == ""

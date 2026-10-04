@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
+import sys
 import time
 from collections.abc import Callable, Sequence
 from datetime import date, datetime, timezone
@@ -23,6 +25,14 @@ from eval.resolve import resolve_case
 EVAL_DIR = Path(__file__).resolve().parent
 CASES_PATH = EVAL_DIR / "cases.json"
 RESULTS_DIR = EVAL_DIR / "results"
+
+
+class EvaluationInterrupted(KeyboardInterrupt):
+    """An interrupted run whose partial output can be resumed."""
+
+    def __init__(self, output_path: Path) -> None:
+        self.output_path = output_path
+        super().__init__(str(output_path))
 
 
 def load_cases(path: Path = CASES_PATH) -> list[dict[str, Any]]:
@@ -105,16 +115,26 @@ def _run_evaluation(
     if not pending:
         output_path.touch(exist_ok=True)
         return output_path
+    output_path.touch(exist_ok=True)
 
-    store = get_store()
-    embedder = get_embedder()
-    llm_client = get_llm_client()
-    connection = get_readonly_connection()
-    evaluation_date = date.today()
-
+    connection = None
     try:
+        store = get_store()
+        embedder = get_embedder()
+        llm_client = get_llm_client()
+        connection = get_readonly_connection()
+        evaluation_date = date.today()
+
         with output_path.open("a", encoding="utf-8", newline="\n") as output:
-            for index, case in enumerate(pending):
+            for index, case in enumerate(pending, start=1):
+                total = len(pending)
+                case_id = str(case["id"])
+                print(
+                    f"[{index}/{total}] {case_id} starting",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                timings: dict[str, float] = {}
                 try:
                     record = _evaluate_case(
                         case,
@@ -123,6 +143,7 @@ def _run_evaluation(
                         embedder=embedder,
                         llm_client=llm_client,
                         evaluation_date=evaluation_date,
+                        timings=timings,
                     )
                 except Exception as exc:  # Keep an unexpected case failure isolated.
                     record = _empty_record(case)
@@ -133,10 +154,20 @@ def _run_evaluation(
                     + "\n"
                 )
                 output.flush()
-                if index < len(pending) - 1 and sleep_seconds > 0:
+                _print_completed_progress(
+                    index=index,
+                    total=total,
+                    case=case,
+                    record=record,
+                    timings=timings,
+                )
+                if index < total and sleep_seconds > 0:
                     sleeper(sleep_seconds)
+    except KeyboardInterrupt as exc:
+        raise EvaluationInterrupted(output_path) from exc
     finally:
-        connection.close()
+        if connection is not None:
+            connection.close()
 
     return output_path
 
@@ -149,6 +180,7 @@ def _evaluate_case(
     embedder: Any,
     llm_client: LLMClient,
     evaluation_date: date,
+    timings: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     record = _empty_record(case)
     errors: list[str] = []
@@ -163,6 +195,7 @@ def _evaluate_case(
         errors.append(f"resolve: {_safe_error(exc)}")
 
     captured_metrics: list[dict[str, Any]] = []
+    hybrid_started = time.perf_counter()
     try:
         hybrid = handle_ask(
             customer_id=int(case["customer_id"]),
@@ -199,6 +232,9 @@ def _evaluate_case(
         )
     except Exception as exc:
         errors.append(f"hybrid: {_safe_error(exc)}")
+    finally:
+        if timings is not None:
+            timings["hybrid"] = time.perf_counter() - hybrid_started
 
     if captured_metrics:
         record["hybrid_metrics"] = captured_metrics[-1]
@@ -210,6 +246,7 @@ def _evaluate_case(
             for call in captured_metrics[-1].get("llm_calls", [])
         ]
 
+    baseline_started = time.perf_counter()
     try:
         baseline = answer_baseline(
             str(case["question"]),
@@ -224,9 +261,49 @@ def _evaluate_case(
         }
     except Exception as exc:
         errors.append(f"baseline: {_safe_error(exc)}")
+    finally:
+        if timings is not None:
+            timings["baseline"] = time.perf_counter() - baseline_started
 
     record["error"] = "; ".join(errors) if errors else None
     return record
+
+
+def _print_completed_progress(
+    *,
+    index: int,
+    total: int,
+    case: dict[str, Any],
+    record: dict[str, Any],
+    timings: dict[str, float],
+) -> None:
+    hybrid_status = "error" if _stage_has_error(record, "hybrid") else "ok"
+    if hybrid_status == "ok" and record.get("degraded"):
+        hybrid_status = "degraded"
+    baseline_status = "error" if _stage_has_error(record, "baseline") else "ok"
+    cache_hits = sum(
+        bool(item.get("cache_hit"))
+        for item in record.get("hybrid_cache_hits", [])
+    ) + int(bool(record.get("baseline_cache_hit")))
+    print(
+        f"[{index}/{total}] {case['id']} {case['category']} "
+        f"hybrid={hybrid_status} {timings.get('hybrid', 0.0):.2f}s "
+        f"baseline={baseline_status} {timings.get('baseline', 0.0):.2f}s "
+        f"cache_hits={cache_hits}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _stage_has_error(record: dict[str, Any], stage: str) -> bool:
+    error = record.get("error")
+    if not error:
+        return False
+    parts = [part.strip() for part in str(error).split(";")]
+    return any(
+        part.startswith(f"{stage}:") or part.startswith("runner:")
+        for part in parts
+    )
 
 
 def _empty_record(case: dict[str, Any]) -> dict[str, Any]:
@@ -341,15 +418,39 @@ def main(argv: Sequence[str] | None = None) -> int:
     selected_ids = None
     if args.ids is not None:
         selected_ids = {item.strip() for item in args.ids.split(",") if item.strip()}
-    output_path = run_evaluation(
-        limit=args.limit,
-        ids=selected_ids,
-        category=args.category,
-        resume=args.resume,
-        sleep_seconds=args.sleep,
-    )
+    try:
+        output_path = run_evaluation(
+            limit=args.limit,
+            ids=selected_ids,
+            category=args.category,
+            resume=args.resume,
+            sleep_seconds=args.sleep,
+        )
+    except EvaluationInterrupted as exc:
+        resume_command = _resume_command(args, exc.output_path)
+        print(f"Raw results: {exc.output_path}", file=sys.stderr, flush=True)
+        print(f"Resume: {resume_command}", file=sys.stderr, flush=True)
+        return 130
     print(output_path)
     return 0
+
+
+def _resume_command(args: argparse.Namespace, output_path: Path) -> str:
+    command = [
+        sys.executable,
+        "-m",
+        "eval.run_eval",
+        "--resume",
+        str(output_path),
+    ]
+    if args.limit is not None:
+        command.extend(["--limit", str(args.limit)])
+    if args.ids is not None:
+        command.extend(["--ids", args.ids])
+    if args.category is not None:
+        command.extend(["--category", args.category])
+    command.extend(["--sleep", str(args.sleep)])
+    return subprocess.list2cmdline(command)
 
 
 if __name__ == "__main__":
