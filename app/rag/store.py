@@ -97,6 +97,16 @@ class PolicyStore:
         result = self.collection.get(where={"doc_id": doc_id}, include=[])
         return len(result["ids"])
 
+    def get_chunks(self, chunk_ids: list[str]) -> dict[str, str]:
+        """Return the stored text for specific chunk IDs."""
+        if not chunk_ids:
+            return {}
+        result = self.collection.get(ids=chunk_ids, include=["documents"])
+        return {
+            str(chunk_id): str(document)
+            for chunk_id, document in zip(result["ids"], result["documents"])
+        }
+
     def list_doc_ids(self) -> list[str]:
         result = self.collection.get(include=["metadatas"])
         return sorted({str(metadata["doc_id"]) for metadata in result["metadatas"]})

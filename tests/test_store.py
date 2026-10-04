@@ -29,6 +29,20 @@ def test_get_doc_version(tmp_path: Path) -> None:
     assert store.get_doc_version("missing") is None
 
 
+def test_get_chunks_returns_only_requested_text(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    store.add_chunks(
+        "shipping",
+        "v1",
+        ["First policy chunk", "Second policy chunk"],
+        [[1.0, 0.0], [0.0, 1.0]],
+    )
+
+    assert store.get_chunks(["shipping:v1:1", "missing:v1:0"]) == {
+        "shipping:v1:1": "Second policy chunk"
+    }
+
+
 def test_delete_other_versions_only_affects_requested_doc(tmp_path: Path) -> None:
     store = make_store(tmp_path)
     store.add_chunks("returns", "v1", ["Returns v1\n\nOld"], [[1.0, 0.0]])
