@@ -1,0 +1,24 @@
+id,category,system,auto_verdict,failed_checks,flagged_tokens,answer_excerpt,manual_verdict,notes
+D01,data,hybrid,pass,[],[],Yes! Order #131 was delivered on 2026‑10‑02.,,
+D01,data,baseline,pass,[],"[""placed""]","Hi there! I’m happy to look into the status of order #131 for you.
+
+Could you please confirm the name or email address the order was placed under? That’ll help me pull up the exact details and let you know whether it’s been delivered, is still in transit, or if there’s anything else we need to do.
+
+",,
+D02,data,hybrid,fail,"[""0:order_total""]",[],,,
+D02,data,baseline,fail,"[""0:order_total""]",[],"Sure thing! To look up the details for order #91, I’ll need to verify a few things first. Could you please provide one of the following so I can pull up the correct record?
+
+- The email address used for the purchase  
+- The phone number associated with the account  
+- The full name on the order  
+
+O",,
+D03,data,hybrid,pass,[],[],"Sure! In order #1 you purchased:
+
+- **Snap Action Camera** – 3 units  
+- **Gentle Daily Cleanser** – 3 units  
+- **Minimalist Tote Bag** – 2 units  
+- **Wool Blend Sweater** – 2 units  
+
+Let me know if you need anything else!",,
+D03,data,baseline,fail,"[""0:item_name""]",[],"Sure thing! I’m happy to look up the details for you. Could you please provide the order number (or the email address you used when placing the order) so I can pull up the exact items from order #1? Once I have that, I’ll send you a quick summary of what you purchased.",,

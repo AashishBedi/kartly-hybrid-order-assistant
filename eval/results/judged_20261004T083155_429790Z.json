@@ -1,0 +1,169 @@
+{
+  "source_raw_file": "C:\\Users\\91798\\Desktop\\Kartly\\eval\\results\\raw_20261004T081533_152701Z.jsonl",
+  "generated_at_utc": "20261004T083155_429790Z",
+  "cases": [
+    {
+      "case_id": "D01",
+      "category": "data",
+      "question": "Has order #131 been delivered yet?",
+      "systems": {
+        "hybrid": {
+          "answer": "Yes! Order #131 was delivered on 2026‑10‑02.",
+          "checks": [
+            {
+              "index": 0,
+              "kind": "order_status",
+              "passed": true
+            }
+          ],
+          "case_pass": true,
+          "unsupported_claim": false,
+          "flagged_tokens": [],
+          "error": null
+        },
+        "baseline": {
+          "answer": "Hi there! I’m happy to look into the status of order #131 for you.\n\nCould you please confirm the name or email address the order was placed under? That’ll help me pull up the exact details and let you know whether it’s been delivered, is still in transit, or if there’s anything else we need to do.\n\nThanks! 🙏",
+          "checks": [
+            {
+              "index": 0,
+              "kind": "order_status",
+              "passed": true
+            }
+          ],
+          "case_pass": true,
+          "unsupported_claim": true,
+          "flagged_tokens": [
+            "placed"
+          ],
+          "error": null
+        }
+      }
+    },
+    {
+      "case_id": "D02",
+      "category": "data",
+      "question": "What was the total charged for order 91?",
+      "systems": {
+        "hybrid": {
+          "answer": "",
+          "checks": [
+            {
+              "index": 0,
+              "kind": "order_total",
+              "passed": false
+            }
+          ],
+          "case_pass": false,
+          "unsupported_claim": false,
+          "flagged_tokens": [],
+          "error": null
+        },
+        "baseline": {
+          "answer": "Sure thing! To look up the details for order #91, I’ll need to verify a few things first. Could you please provide one of the following so I can pull up the correct record?\n\n- The email address used for the purchase  \n- The phone number associated with the account  \n- The full name on the order  \n\nOnce I have that, I’ll be able to tell you the total amount charged for order #91. Thank you!",
+          "checks": [
+            {
+              "index": 0,
+              "kind": "order_total",
+              "passed": false
+            }
+          ],
+          "case_pass": false,
+          "unsupported_claim": false,
+          "flagged_tokens": [],
+          "error": null
+        }
+      }
+    },
+    {
+      "case_id": "D03",
+      "category": "data",
+      "question": "Remind me what I bought in #1.",
+      "systems": {
+        "hybrid": {
+          "answer": "Sure! In order #1 you purchased:\n\n- **Snap Action Camera** – 3 units  \n- **Gentle Daily Cleanser** – 3 units  \n- **Minimalist Tote Bag** – 2 units  \n- **Wool Blend Sweater** – 2 units  \n\nLet me know if you need anything else!",
+          "checks": [
+            {
+              "index": 0,
+              "kind": "item_name",
+              "passed": true
+            }
+          ],
+          "case_pass": true,
+          "unsupported_claim": false,
+          "flagged_tokens": [],
+          "error": null
+        },
+        "baseline": {
+          "answer": "Sure thing! I’m happy to look up the details for you. Could you please provide the order number (or the email address you used when placing the order) so I can pull up the exact items from order #1? Once I have that, I’ll send you a quick summary of what you purchased.",
+          "checks": [
+            {
+              "index": 0,
+              "kind": "item_name",
+              "passed": false
+            }
+          ],
+          "case_pass": false,
+          "unsupported_claim": false,
+          "flagged_tokens": [],
+          "error": null
+        }
+      }
+    }
+  ],
+  "summary": {
+    "overall": {
+      "hybrid": {
+        "passes": "2/3",
+        "unsupported_claim_rate": "0/3",
+        "errors": "0/3",
+        "degraded_count": 0,
+        "latency_ms": {
+          "p50": 2016.0,
+          "p95": 2721.6
+        },
+        "mean_cost_per_case": 0.00033705000000000003,
+        "cache_hits": "0/6"
+      },
+      "baseline": {
+        "passes": "1/3",
+        "unsupported_claim_rate": "1/3",
+        "errors": "0/3",
+        "degraded_count": 0,
+        "latency_ms": {
+          "p50": 1203.0,
+          "p95": 1219.2
+        },
+        "mean_cost_per_case": 0.0001244,
+        "cache_hits": "0/3"
+      }
+    },
+    "categories": {
+      "data": {
+        "hybrid": {
+          "passes": "2/3",
+          "unsupported_claim_rate": "0/3",
+          "errors": "0/3",
+          "degraded_count": 0,
+          "latency_ms": {
+            "p50": 2016.0,
+            "p95": 2721.6
+          },
+          "mean_cost_per_case": 0.00033705000000000003,
+          "cache_hits": "0/6"
+        },
+        "baseline": {
+          "passes": "1/3",
+          "unsupported_claim_rate": "1/3",
+          "errors": "0/3",
+          "degraded_count": 0,
+          "latency_ms": {
+            "p50": 1203.0,
+            "p95": 1219.2
+          },
+          "mean_cost_per_case": 0.0001244,
+          "cache_hits": "0/3"
+        }
+      }
+    }
+  }
+}
