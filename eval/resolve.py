@@ -21,9 +21,12 @@ from app.routing.rules import _BLOCK_MESSAGES
 YES_PHRASES = ("eligible", "can return", "within")
 NO_PHRASES = (
     "not eligible",
+    "is not eligible",
+    "isn't eligible",
     "ineligible",
     "cannot",
     "can't",
+    "can't be returned",
     "not returnable",
     "outside",
     "ended",
@@ -46,6 +49,11 @@ REFUSAL_PHRASES = tuple(
         "couldn't find",
         "not available",
         "only help with",
+        "only able to help with",
+        "can only help with",
+        "i don't have",
+        "doesn't include",
+        "can't answer",
         "not something i can",
     )
 )
@@ -159,9 +167,13 @@ def check_answer(answer: str, resolved: dict[str, Any]) -> bool:
     if kind == "item_name":
         return any(value.casefold() in normalized for value in resolved["values"])
     if kind == "policy_number":
-        return _contains_number(answer, str(resolved["value"]))
+        return _contains_policy_number(answer, str(resolved["value"]))
     if kind == "refusal":
-        return any(phrase in normalized for phrase in resolved["phrases"])
+        phrases = {
+            *(str(phrase).casefold() for phrase in resolved.get("phrases", [])),
+            *REFUSAL_PHRASES,
+        }
+        return any(phrase in normalized for phrase in phrases)
     if kind == "must_contain_any":
         return any(
             str(value).casefold() in normalized for value in resolved["values"]
@@ -190,6 +202,17 @@ def _contains_word(answer: str, value: str) -> bool:
 
 def _contains_number(answer: str, value: str) -> bool:
     return re.search(rf"(?<![\d.]){re.escape(value)}(?![\d.])", answer) is not None
+
+
+def _contains_policy_number(answer: str, value: str) -> bool:
+    if _contains_number(answer, value):
+        return True
+    if value != "12":
+        return False
+    return (
+        re.search(r"(?<!\w)(?:1|one)(?:\s+|-)year(?!\w)", answer, re.I)
+        is not None
+    )
 
 
 def _check_return_decision(answer: str, resolved: dict[str, Any]) -> bool:

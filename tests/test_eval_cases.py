@@ -268,6 +268,72 @@ def test_refusal_check_accepts_generic_phrases(
     assert check_answer(message, resolved)
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "I'm only able to help with Kartly questions.",
+        "I can only help with Kartly questions.",
+        "I don't have those details.",
+        "The provided information doesn't include those details.",
+        "I can't answer that reliably.",
+    ],
+)
+def test_refusal_check_accepts_reviewed_generic_phrases(
+    message: str,
+    db: sqlite3.Connection,
+) -> None:
+    resolved = resolve_check({"kind": "refusal"}, 1, db, date.today())
+
+    assert check_answer(message, resolved)
+    assert check_answer(message, {"kind": "refusal", "phrases": []})
+
+
+def test_refusal_check_rejects_unsupported_answer(
+    db: sqlite3.Connection,
+) -> None:
+    resolved = resolve_check({"kind": "refusal"}, 1, db, date.today())
+
+    assert not check_answer("The capital of France is Paris.", resolved)
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "isn't eligible",
+        "is not eligible",
+        "ineligible",
+        "can't be returned",
+        "not returnable",
+    ],
+)
+def test_return_decision_no_accepts_reviewed_phrases(phrase: str) -> None:
+    resolved = {
+        "kind": "return_decision",
+        "decision": "no",
+        "reason": "not delivered",
+    }
+
+    assert check_answer(
+        f"Order #12 hasn't been delivered yet, so it {phrase}.",
+        resolved,
+    )
+
+
+@pytest.mark.parametrize("duration", ["1 year", "one year", "1-year", "one-year"])
+def test_twelve_month_policy_number_accepts_one_year(duration: str) -> None:
+    assert check_answer(
+        f"The warranty lasts {duration}.",
+        {"kind": "policy_number", "value": "12"},
+    )
+
+
+def test_policy_number_does_not_generalize_month_year_equivalence() -> None:
+    assert not check_answer(
+        "Returns are allowed for one month.",
+        {"kind": "policy_number", "value": "30"},
+    )
+
+
 def test_a05_sql_tautology_is_blocked(cases: list[dict]) -> None:
     case = next(case for case in cases if case["id"] == "A05")
 

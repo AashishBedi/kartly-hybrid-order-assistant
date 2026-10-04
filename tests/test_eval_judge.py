@@ -222,3 +222,62 @@ def test_normalize_text_canonicalizes_unicode_punctuation_and_spacing() -> None:
     )
 
     assert normalize_text(text) == '"A" B-------C\'D\''
+
+
+def test_lifecycle_dates_support_matching_status_words() -> None:
+    allowed = _claims_from_rows(
+        [
+            {
+                "status": "delivered",
+                "shipped_date": "2026-10-01",
+                "delivered_date": "2026-10-02",
+            }
+        ]
+    )
+
+    assert ("status", "shipped") in allowed
+    assert ("status", "delivered") in allowed
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Neither item was shipped or delivered.",
+        "No item was shipped.",
+        "Order #12 wasn't delivered.",
+        "Order #12 has not been delivered.",
+    ],
+)
+def test_negated_status_words_are_not_claims(answer: str) -> None:
+    assert not [claim for claim in extract_claims(answer) if claim.kind == "status"]
+
+
+def test_generic_no_information_refusal_passes_but_concrete_answer_fails(
+    tmp_path: Path,
+) -> None:
+    raw_path = tmp_path / "raw_refusal.jsonl"
+    record = raw_case(
+        "U1",
+        "unanswerable",
+        "Which countries does Kartly ship to?",
+        [{"kind": "refusal", "phrases": []}],
+        (
+            "I'm sorry, but the provided information doesn't include details "
+            "about the countries Kartly ships to internationally."
+        ),
+        "The capital of France is Paris.",
+        1,
+    )
+    raw_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    judged_path, _ = judge_file(
+        raw_path,
+        results_dir=tmp_path / "results",
+        timestamp="20261004T130000_000000Z",
+    )
+    case = json.loads(judged_path.read_text(encoding="utf-8"))["cases"][0]
+
+    assert case["systems"]["hybrid"]["case_pass"] is True
+    assert case["systems"]["hybrid"]["unsupported_claim"] is False
+    assert case["systems"]["baseline"]["case_pass"] is False
+    assert case["systems"]["baseline"]["unsupported_claim"] is True

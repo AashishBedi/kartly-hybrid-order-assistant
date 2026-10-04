@@ -1,13 +1,15 @@
 """Deterministically judge raw Kartly evaluation results.
 
 An "unsupported claim" is an exact answer span asserting a concrete order ID,
-order status, date, monetary amount, day count, percentage, or email address
-that cannot be matched to the case's customer-scoped DB rows, cited policy
-text, resolved checks, or question. For out-of-scope, unanswerable, and
-adversarial cases, a non-refusal declarative answer is also unsupported; when
-it contains none of the concrete token types above, its first exact sentence
-is flagged. The detector intentionally ignores other prose, so a missing flag
-is not proof that every statement is grounded.
+affirmative order status, date, monetary amount, day count, percentage, or
+email address that cannot be matched to the case's customer-scoped DB rows,
+cited policy text, resolved checks, or question. ``shipped`` and ``delivered``
+are supported when the order has the corresponding lifecycle date, and
+negated status wording is not treated as a claim. For out-of-scope,
+unanswerable, and adversarial cases, a non-refusal declarative answer is also
+unsupported; when it contains none of the concrete token types above, its
+first exact sentence is flagged. The detector intentionally ignores other
+prose, so a missing flag is not proof that every statement is grounded.
 """
 
 from __future__ import annotations
@@ -223,13 +225,11 @@ def extract_claims(text: str) -> list[Claim]:
                 claims.append(Claim(kind=kind, value=value, token=token))
 
     add_matches(_ORDER_ID_RE, "order_id", lambda value: str(int(value)), group=1)
-    add_matches(
-        _STATUS_RE,
-        "status",
-        lambda value: value.casefold(),
-        group=1,
-        token_group=1,
-    )
+    for match in _STATUS_RE.finditer(text):
+        if _status_is_negated(text, match):
+            continue
+        token = match.group(1).strip()
+        claims.append(Claim(kind="status", value=token.casefold(), token=token))
     add_matches(_DATE_RE, "date", _canonical_date, group=1)
     add_matches(_CURRENCY_RE, "amount", _canonical_number)
     add_matches(
@@ -435,6 +435,12 @@ def _claims_from_rows(rows: Iterable[dict[str, Any]]) -> set[tuple[str, str]]:
                 allowed.add(("status", normalize_text(str(value)).casefold()))
             elif key.endswith("_date"):
                 allowed.add(("date", _canonical_date(str(value))))
+                lifecycle_status = {
+                    "shipped_date": "shipped",
+                    "delivered_date": "delivered",
+                }.get(key)
+                if lifecycle_status:
+                    allowed.add(("status", lifecycle_status))
             elif key in {"total", "unit_price"}:
                 canonical = _canonical_number(str(value))
                 if canonical is not None:
@@ -442,6 +448,15 @@ def _claims_from_rows(rows: Iterable[dict[str, Any]]) -> set[tuple[str, str]]:
             elif key == "email":
                 allowed.add(("email", normalize_text(str(value)).casefold()))
     return allowed
+
+
+def _status_is_negated(text: str, match: re.Match[str]) -> bool:
+    clause_start = max(
+        text.rfind(separator, 0, match.start())
+        for separator in (".", "!", "?", ";", ",", "\n")
+    )
+    prefix = text[clause_start + 1 : match.start()]
+    return re.search(r"(?i)\b(?:neither|no|none)\b", prefix) is not None
 
 
 def _claims_from_computed_facts(facts: dict[str, Any]) -> set[tuple[str, str]]:
