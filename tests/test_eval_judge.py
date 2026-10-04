@@ -5,7 +5,12 @@ from typing import Any
 
 import pytest
 
-from eval.judge import extract_claims, judge_file
+from eval.judge import (
+    _claims_from_rows,
+    extract_claims,
+    judge_file,
+    normalize_text,
+)
 
 
 def metrics(
@@ -188,3 +193,32 @@ def test_claim_extraction_returns_exact_tokens() -> None:
         "30-day",
         "5%",
     ]
+    assert normalize_text(answer) == answer
+
+
+def test_unicode_date_matches_ascii_db_date() -> None:
+    claims = extract_claims("Delivered on 2026\u201110\u201102.")
+    date_claim = next(claim for claim in claims if claim.kind == "date")
+
+    assert date_claim.key in _claims_from_rows(
+        [{"delivered_date": "2026-10-02"}]
+    )
+
+
+def test_narrow_no_break_space_order_id_tokenizes_normally() -> None:
+    claims = extract_claims("Order\u202f#131 was delivered.")
+
+    assert (claims[0].kind, claims[0].value, claims[0].token) == (
+        "order_id",
+        "131",
+        "Order #131",
+    )
+
+
+def test_normalize_text_canonicalizes_unicode_punctuation_and_spacing() -> None:
+    text = (
+        "\u201cA\u201d\u00a0\u202f\u2009B\u200b"
+        "\u2010\u2011\u2012\u2013\u2014\u2015\u2212C\u2018D\u2019"
+    )
+
+    assert normalize_text(text) == '"A" B-------C\'D\''

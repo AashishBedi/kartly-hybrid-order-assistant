@@ -17,6 +17,7 @@ import csv
 import json
 import math
 import re
+import unicodedata
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -67,6 +68,32 @@ _DECLARATIVE_RE = re.compile(
     r"allows?|allowed|covers?|covered|will)\b"
 )
 _SENTENCE_RE = re.compile(r"[^.!?\n]+[.!?]?", re.MULTILINE)
+_TEXT_TRANSLATION = str.maketrans(
+    {
+        **{
+            ord(character): "-"
+            for character in "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
+        },
+        **{ord(character): "'" for character in "\u2018\u2019\u201a\u201b"},
+        **{ord(character): '"' for character in "\u201c\u201d\u201e\u201f"},
+    }
+)
+
+
+def normalize_text(text: str) -> str:
+    """Return a comparison-only canonical form for Unicode text."""
+    normalized = unicodedata.normalize("NFKC", text).translate(_TEXT_TRANSLATION)
+    normalized = "".join(
+        ""
+        if unicodedata.category(character) == "Cf"
+        or 0xFE00 <= ord(character) <= 0xFE0F
+        or 0xE0100 <= ord(character) <= 0xE01EF
+        else " "
+        if character != " " and character.isspace()
+        else character
+        for character in normalized
+    )
+    return re.sub(r" +", " ", normalized)
 
 
 @dataclass(frozen=True)
@@ -171,6 +198,7 @@ class EvidenceContext:
 
 def extract_claims(text: str) -> list[Claim]:
     """Extract the deliberately small set of concrete claim spans."""
+    text = normalize_text(text)
     claims: list[Claim] = []
     occupied: set[tuple[int, int, str]] = set()
 
@@ -286,10 +314,24 @@ def _judge_system(
     evidence_complete: bool,
 ) -> dict[str, Any]:
     answer = str(record.get(f"{system}_answer") or "")
+    comparison_answer = normalize_text(answer)
     error = _system_error(record.get("error"), system)
     check_results = []
     for index, check in enumerate(record.get("resolved_checks", [])):
-        passed = bool(check_answer(answer, check))
+        comparison_check = {
+            key: (
+                [
+                    normalize_text(value) if isinstance(value, str) else value
+                    for value in item
+                ]
+                if isinstance(item, list)
+                else normalize_text(item)
+                if isinstance(item, str)
+                else item
+            )
+            for key, item in check.items()
+        }
+        passed = bool(check_answer(comparison_answer, comparison_check))
         check_results.append(
             {
                 "index": index,
@@ -299,7 +341,7 @@ def _judge_system(
         )
     case_pass = error is None and all(result["passed"] for result in check_results)
     flagged_tokens = [] if error else _unsupported_tokens(
-        answer,
+        comparison_answer,
         category=str(record.get("category", "")),
         checks=record.get("resolved_checks", []),
         check_results=check_results,
@@ -325,6 +367,7 @@ def _unsupported_tokens(
     allowed_claims: set[tuple[str, str]],
     evidence_complete: bool,
 ) -> list[str]:
+    answer = normalize_text(answer)
     claims = extract_claims(answer)
     flagged = [
         claim.token
@@ -359,7 +402,10 @@ def _claims_from_resolved_checks(
         if "value" in check:
             values = [check["value"], *values]
         if kind == "order_status":
-            allowed.update(("status", str(value).casefold()) for value in values)
+            allowed.update(
+                ("status", normalize_text(str(value)).casefold())
+                for value in values
+            )
         elif kind == "order_total":
             allowed.update(
                 ("amount", canonical)
@@ -386,7 +432,7 @@ def _claims_from_rows(rows: Iterable[dict[str, Any]]) -> set[tuple[str, str]]:
             if key in {"id", "order_id"}:
                 allowed.add(("order_id", str(int(value))))
             elif key == "status":
-                allowed.add(("status", str(value).casefold()))
+                allowed.add(("status", normalize_text(str(value)).casefold()))
             elif key.endswith("_date"):
                 allowed.add(("date", _canonical_date(str(value))))
             elif key in {"total", "unit_price"}:
@@ -394,7 +440,7 @@ def _claims_from_rows(rows: Iterable[dict[str, Any]]) -> set[tuple[str, str]]:
                 if canonical is not None:
                     allowed.add(("amount", canonical))
             elif key == "email":
-                allowed.add(("email", str(value).casefold()))
+                allowed.add(("email", normalize_text(str(value)).casefold()))
     return allowed
 
 
@@ -610,14 +656,14 @@ def _evaluation_date_from_path(path: Path) -> date:
 
 
 def _canonical_date(value: str) -> str:
-    return re.sub(rf"[-{_DASHES}]", "-", value)
+    return re.sub(rf"[-{_DASHES}]", "-", normalize_text(value))
 
 
 def _canonical_number(value: str) -> str | None:
     cleaned = re.sub(
         r"(?i)(?:USD|dollars?|rupees?|euros?|pounds?|[$€£₹])",
         "",
-        value,
+        normalize_text(value),
     )
     try:
         number = Decimal(cleaned.replace(",", "").strip())
@@ -627,6 +673,7 @@ def _canonical_number(value: str) -> str | None:
 
 
 def _first_declarative_sentence(answer: str) -> str:
+    answer = normalize_text(answer)
     for match in _SENTENCE_RE.finditer(answer):
         sentence = match.group(0).strip()
         if sentence and _DECLARATIVE_RE.search(sentence):
