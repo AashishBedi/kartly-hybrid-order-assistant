@@ -286,6 +286,10 @@ flowchart LR
 | `order 1 OR 1=1` was not blocked by the rule guard | Found while reviewing the evaluation's adversarial case labels | Added narrow tautology and `UNION SELECT` patterns, with tests that normal sentences like "order 1 or 2" still pass |
 | Degraded answers listed order facts but never stated the return decision | Seen in the first live run with no model available | The code-built fallback now leads with the computed decision and window end date |
 | Metrics log lines were missing under `uvicorn` | Tests passed, but the running server printed only access logs | Configured a dedicated metrics logger [CONFIRM: fix committed] |
+| The LLM router sometimes failed JSON validation | Per-call metrics with a failure category showed HTTP 400 `json_validate_failed` on 7 of 37 routed requests in two runs; the keyword fallback absorbed them | The router's `max_tokens=100` was too low for `gpt-oss-20b` JSON mode; raising it to 512 reduced the failures to 0 of 37 in run 4 |
+| Blank LLM answers were accepted as successful and cached | The reasoning model sometimes reached its token limit without producing an answer | Treat a blank answer as a failure and retry once with a larger token limit |
+| The answer model doubled an order total | The total appeared on every joined item row, so the model added it more than once | Present order-level fields once, separately from the item rows |
+| Some combined cases were slow in an early run | The delays were consistent with Groq rate limiting | Pace evaluation requests 5 seconds apart; the paced run had no retries |
 | Seeded dates drift with the day the seed runs, which would make fixed expected answers go stale | Planning the evaluation set | Expected values are resolved from the database and today's date at evaluation time, using orders well away from the 30-day boundary |
 
 ## 7. Testing
@@ -366,6 +370,9 @@ pytest -q
 
 - **No authentication.** `/ask` trusts the `customer_id` in the request body. A real deployment must derive it from a verified session or token; the data layer already treats it as server-supplied.
 - **Small evaluation set** written by one person, judged by rules that I wrote; it shows direction, not statistical proof.
+- **The judge matches fixed phrases.** An answer can pass or fail because of wording. Manual review shows that C04 in run 4 is an automatic failure even though the answer gives the correct decision and reason, because "isn't returnable" is not in the phrase list.
+- **Two evaluation cases have defects.** Reading the failures showed that U05 is labeled unanswerable even though `exchange_policy.md` covers it, while C07 requires the answer to repeat "12" even though the question asks for the end date. The adjusted view excludes both cases, but the full 42-case results remain the headline.
+- **Answers vary between runs.** The unsupported-claim check only catches concrete tokens, and the system sometimes reasons from what a policy does not list.
 - **Keyword-based tool planning.** Unusual phrasings can pick the wrong query tool.
 - **English-only rules** in the guard and fallback router.
 - **Background jobs run in-process.** A restart during ingestion loses the running task (the job record would stay `running`).
@@ -407,6 +414,10 @@ pytest -q
 - **Design the failure path first.** The bad-key demo returns a useful answer with `degraded: true` because the fallback was built and tested alongside the happy path.
 - **Let code do the arithmetic.** Computing return windows and warranty dates in code removed a whole class of model errors.
 - **Separate running from judging in an evaluation.** Saving raw outputs lets me fix a judging rule and re-score without spending more LLM calls.
+- **Record failures for each model call.** The router's failure category exposed JSON validation errors that the keyword fallback had hidden.
+- **Validate an answer before caching it.** A successful HTTP response can still contain a blank answer, which should be retried instead of cached.
+- **Do not repeat shared facts in model input.** Showing an order total once prevents the model from adding the same value for every item.
+- **Pace live evaluations.** Spacing requests made it easier to separate product behavior from rate-limit delays.
 
 ## Run so far
 
