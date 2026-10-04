@@ -4,6 +4,7 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -31,6 +32,9 @@ class FakeStore:
 
 
 class FakeEmbedder:
+    def warm_up(self) -> None:
+        pass
+
     def embed(self, texts: list[str]) -> list[list[float]]:
         return [[1.0, 0.0] for _ in texts]
 
@@ -247,6 +251,34 @@ def test_case_filters_apply_before_limit() -> None:
     assert selected == [cases[1]]
 
 
+def test_embedder_warms_up_once_before_first_case(
+    runner_setup: tuple[Path, Path, FakeLLMClient, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cases_path, results_dir, _, _ = runner_setup
+    events: list[str] = []
+    embedder = Mock(spec=["warm_up", "embed"])
+    embedder.warm_up.side_effect = lambda: events.append("warm_up")
+    embedder.embed.side_effect = FakeEmbedder().embed
+    evaluate_case = run_eval._evaluate_case
+
+    def tracked_evaluate_case(case: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        events.append(f"case:{case['id']}")
+        return evaluate_case(case, **kwargs)
+
+    monkeypatch.setattr(run_eval, "get_embedder", lambda: embedder)
+    monkeypatch.setattr(run_eval, "_evaluate_case", tracked_evaluate_case)
+
+    run_eval.run_evaluation(
+        cases_path=cases_path,
+        results_dir=results_dir,
+        sleep_seconds=0,
+    )
+
+    embedder.warm_up.assert_called_once_with()
+    assert events[:2] == ["warm_up", "case:R1"]
+
+
 def test_progress_uses_stderr_and_stdout_only_contains_output_path(
     runner_setup: tuple[Path, Path, FakeLLMClient, str],
     monkeypatch: pytest.MonkeyPatch,
@@ -273,11 +305,12 @@ def test_progress_uses_stderr_and_stdout_only_contains_output_path(
     assert exit_code == 0
     assert captured.out == f"{output_paths[0]}\n"
     lines = captured.err.splitlines()
-    assert lines[0] == "[1/1] R1 starting"
+    assert re.fullmatch(r"warm-up done in \d+\.\d+s", lines[0])
+    assert lines[1] == "[1/1] R1 starting"
     assert re.fullmatch(
         r"\[1/1] R1 data hybrid=ok \d+\.\d{2}s "
         r"baseline=ok \d+\.\d{2}s cache_hits=0",
-        lines[1],
+        lines[2],
     )
 
 

@@ -125,6 +125,14 @@ def _run_evaluation(
         connection = get_readonly_connection()
         evaluation_date = date.today()
 
+        warm_up_started = time.perf_counter()
+        embedder.warm_up()
+        print(
+            f"warm-up done in {time.perf_counter() - warm_up_started:.1f}s",
+            file=sys.stderr,
+            flush=True,
+        )
+
         with output_path.open("a", encoding="utf-8", newline="\n") as output:
             for index, case in enumerate(pending, start=1):
                 total = len(pending)
