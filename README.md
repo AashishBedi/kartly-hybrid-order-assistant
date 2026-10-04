@@ -1,13 +1,3 @@
-<!--
-PRE-SUBMISSION CHECKLIST (delete this block before submitting)
-[ ] Evaluation numbers filled in (search for "[FILL")
-[ ] Metrics log example replaced with a real line (search for "[FILL")
-[ ] AI disclosure confirmed (search for "[CONFIRM")
-[ ] Demo video link added
-[ ] `docker compose up` verified from a fresh clone
-[ ] No .env committed, no stray files (yt.html, scratch scripts)
--->
-
 # Kartly Hybrid Order Support Assistant
 
 A backend service that answers customer questions about their orders and the store's policies, including questions that need both, such as "Can I still return order #1042?".
