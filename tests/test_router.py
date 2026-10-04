@@ -65,7 +65,7 @@ def test_route_question_accepts_each_valid_llm_route(route: Route) -> None:
     assert call["model"] == "router-model"
     assert call["json_mode"] is True
     assert call["stage"] == "router"
-    assert call["max_tokens"] == 100
+    assert call["max_tokens"] == 512
     assert call["messages"][1] == {"role": "user", "content": question}
 
 

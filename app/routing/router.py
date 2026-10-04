@@ -11,6 +11,7 @@ from app.routing.rules import check_blocked, extract_order_id
 
 
 Route = Literal["data", "policy", "combined", "out_of_scope"]
+_ROUTER_MAX_TOKENS = 512
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +104,7 @@ def route_question(
             ],
             json_mode=True,
             stage="router",
-            max_tokens=100,
+            max_tokens=_ROUTER_MAX_TOKENS,
         )
     except LLMError:
         return _fallback_decision(question, order_id, "llm_error")
