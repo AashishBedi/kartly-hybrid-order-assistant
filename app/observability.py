@@ -55,6 +55,8 @@ def record_llm_call(
     cost_usd: float = 0.0,
     attempts: int = 0,
     cache_hit: bool = False,
+    error_category: str | None = None,
+    finish_reason: str | None = None,
 ) -> None:
     metrics = _current_metrics.get()
     if metrics is None:
@@ -68,11 +70,12 @@ def record_llm_call(
         cost_usd = response.cost_usd
         attempts = response.attempts
         cache_hit = response.cache_hit
+        finish_reason = response.finish_reason
 
-    metrics.llm_calls.append(
-        {
+    entry = {
             "stage": stage,
             "model": model,
+            "finish_reason": finish_reason,
             "latency_ms": latency_ms,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
@@ -81,7 +84,9 @@ def record_llm_call(
             "cache_hit": cache_hit,
             "ok": response is not None and error is None,
         }
-    )
+    if error_category is not None:
+        entry["error_category"] = error_category
+    metrics.llm_calls.append(entry)
 
 
 def finish_request() -> dict[str, Any]:

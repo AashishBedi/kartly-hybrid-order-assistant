@@ -33,6 +33,7 @@ class LLMResponse:
     latency_ms: int
     cost_usd: float
     attempts: int
+    finish_reason: str | None = None
     cache_hit: bool = False
 
 
@@ -96,16 +97,19 @@ class LLMClient:
 
         if not self._api_key:
             error = LLMError("GROQ_API_KEY is not set")
-            self._record_failure(stage_name, model, started, attempts, error)
+            self._record_failure(
+                stage_name, model, started, attempts, error, "transport"
+            )
             raise error
 
-        response: httpx.Response | None = None
+        empty_length_retried = False
+        retry_count = 0
 
         with httpx.Client(
             timeout=self._timeout,
             transport=self._transport,
         ) as client:
-            while attempts <= self._max_retries:
+            while True:
                 attempts += 1
                 try:
                     response = client.post(
@@ -117,31 +121,39 @@ class LLMClient:
                         json=body,
                     )
                 except httpx.TimeoutException as exc:
-                    if attempts > self._max_retries:
+                    if retry_count >= self._max_retries:
                         error = LLMError("LLM request timed out")
                         self._record_failure(
-                            stage_name, model, started, attempts, error
+                            stage_name, model, started, attempts, error, "timeout"
                         )
                         raise error from exc
+                    retry_count += 1
                     self._sleep(self._backoff_delay(attempts))
                     continue
                 except httpx.TransportError as exc:
-                    if attempts > self._max_retries:
+                    if retry_count >= self._max_retries:
                         error = LLMError("LLM connection failed")
                         self._record_failure(
-                            stage_name, model, started, attempts, error
+                            stage_name, model, started, attempts, error, "transport"
                         )
                         raise error from exc
+                    retry_count += 1
                     self._sleep(self._backoff_delay(attempts))
                     continue
 
                 if response.status_code == 429 or response.status_code >= 500:
-                    if attempts > self._max_retries:
+                    if retry_count >= self._max_retries:
                         error = LLMError(f"LLM HTTP {response.status_code}")
                         self._record_failure(
-                            stage_name, model, started, attempts, error
+                            stage_name,
+                            model,
+                            started,
+                            attempts,
+                            error,
+                            f"http_{response.status_code}",
                         )
                         raise error
+                    retry_count += 1
                     retry_after = (
                         response.headers.get("Retry-After")
                         if response.status_code == 429
@@ -152,28 +164,52 @@ class LLMClient:
 
                 if 400 <= response.status_code < 500:
                     error = LLMError(f"LLM HTTP {response.status_code}")
-                    self._record_failure(stage_name, model, started, attempts, error)
+                    self._record_failure(
+                        stage_name,
+                        model,
+                        started,
+                        attempts,
+                        error,
+                        f"http_{response.status_code}",
+                    )
                     raise error
 
-                break
+                try:
+                    payload = response.json()
+                except ValueError as exc:
+                    error = LLMError("Malformed LLM response")
+                    self._record_failure(
+                        stage_name, model, started, attempts, error, "parse"
+                    )
+                    raise error from exc
 
-        if response is None:
-            error = LLMError("LLM request failed")
-            self._record_failure(stage_name, model, started, attempts, error)
-            raise error
+                try:
+                    text, finish_reason = self._extract_choice(payload)
+                except LLMError as error:
+                    self._record_failure(
+                        stage_name, model, started, attempts, error, "parse"
+                    )
+                    raise
 
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            error = LLMError("Malformed LLM response")
-            self._record_failure(stage_name, model, started, attempts, error)
-            raise error from exc
+                if text.strip():
+                    break
+                if finish_reason == "length" and not empty_length_retried:
+                    empty_length_retried = True
+                    body["max_tokens"] = max_tokens * 2
+                    continue
 
-        try:
-            text = self._extract_content(payload)
-        except LLMError as error:
-            self._record_failure(stage_name, model, started, attempts, error)
-            raise
+                error = LLMError("LLM returned empty content")
+                self._record_failure(
+                    stage_name,
+                    model,
+                    started,
+                    attempts,
+                    error,
+                    "empty",
+                    finish_reason=finish_reason,
+                )
+                raise error
+
         usage = payload.get("usage")
         if not isinstance(usage, Mapping):
             usage = {}
@@ -191,6 +227,7 @@ class LLMClient:
         result = LLMResponse(
             text=text,
             model=response_model,
+            finish_reason=finish_reason,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             latency_ms=round((time.perf_counter() - started) * 1000),
@@ -224,6 +261,7 @@ class LLMClient:
         try:
             text = payload["text"]
             model = payload.get("model", requested_model)
+            finish_reason = payload.get("finish_reason")
             prompt_tokens = payload["prompt_tokens"]
             completion_tokens = payload["completion_tokens"]
             latency_ms = payload["latency_ms"]
@@ -231,7 +269,9 @@ class LLMClient:
             attempts = payload["attempts"]
         except KeyError:
             return None
-        if not isinstance(text, str) or not isinstance(model, str):
+        if not isinstance(text, str) or not text.strip() or not isinstance(model, str):
+            return None
+        if finish_reason is not None and not isinstance(finish_reason, str):
             return None
         if not all(
             isinstance(value, int) and value >= 0
@@ -243,6 +283,7 @@ class LLMClient:
         return LLMResponse(
             text=text,
             model=model,
+            finish_reason=finish_reason,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             latency_ms=latency_ms,
@@ -253,10 +294,13 @@ class LLMClient:
 
     @staticmethod
     def _write_cache(path: Path, response: LLMResponse) -> None:
+        if not response.text.strip():
+            return
         payload = {
             "ok": True,
             "text": response.text,
             "model": response.model,
+            "finish_reason": response.finish_reason,
             "prompt_tokens": response.prompt_tokens,
             "completion_tokens": response.completion_tokens,
             "latency_ms": response.latency_ms,
@@ -287,6 +331,8 @@ class LLMClient:
         started: float,
         attempts: int,
         error: LLMError,
+        error_category: str,
+        finish_reason: str | None = None,
     ) -> None:
         record_llm_call(
             stage,
@@ -294,10 +340,12 @@ class LLMClient:
             model=model,
             latency_ms=round((time.perf_counter() - started) * 1000),
             attempts=attempts,
+            error_category=error_category,
+            finish_reason=finish_reason,
         )
 
     @staticmethod
-    def _extract_content(payload: Any) -> str:
+    def _extract_choice(payload: Any) -> tuple[str, str | None]:
         if not isinstance(payload, Mapping):
             raise LLMError("Malformed LLM response")
         choices = payload.get("choices")
@@ -312,7 +360,10 @@ class LLMClient:
         content = message["content"]
         if not isinstance(content, str):
             raise LLMError("Malformed LLM response")
-        return content
+        finish_reason = first_choice.get("finish_reason")
+        if finish_reason is not None and not isinstance(finish_reason, str):
+            raise LLMError("Malformed LLM response")
+        return content, finish_reason
 
     @staticmethod
     def _token_count(value: Any) -> int:

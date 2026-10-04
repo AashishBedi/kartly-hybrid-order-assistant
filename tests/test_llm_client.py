@@ -21,12 +21,18 @@ def llm_response(
     text: str = "ok",
     prompt_tokens: int = 100,
     completion_tokens: int = 20,
+    finish_reason: str | None = "stop",
 ) -> httpx.Response:
     return httpx.Response(
         200,
         json={
             "model": MODEL,
-            "choices": [{"message": {"content": text}}],
+            "choices": [
+                {
+                    "message": {"content": text},
+                    "finish_reason": finish_reason,
+                }
+            ],
             "usage": {
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
@@ -82,10 +88,98 @@ def test_eval_cache_miss_then_hit(
     assert miss.cache_hit is False
     assert hit.cache_hit is True
     assert hit.text == miss.text
+    assert hit.finish_reason == miss.finish_reason == "stop"
     assert hit.prompt_tokens == miss.prompt_tokens
     assert hit.completion_tokens == miss.completion_tokens
     assert hit.latency_ms == miss.latency_ms
     assert len(list(tmp_path.glob("*.json"))) == 1
+    cache_payload = json.loads(next(tmp_path.glob("*.json")).read_text())
+    assert cache_payload["finish_reason"] == "stop"
+
+
+def test_blank_length_response_retries_once_with_double_tokens_and_is_not_cached(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("EVAL_CACHE", "1")
+    request_bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_bodies.append(json.loads(request.content))
+        return llm_response(text=" \n", finish_reason="length")
+
+    client = make_client(handler, cache_dir=tmp_path)
+
+    start_request("blank-test")
+    with pytest.raises(LLMError, match="empty content"):
+        client.chat(MODEL, [], max_tokens=50)
+    metrics = finish_request()
+
+    assert [body["max_tokens"] for body in request_bodies] == [50, 100]
+    assert not tmp_path.exists() or list(tmp_path.iterdir()) == []
+    assert metrics["llm_calls"][0]["finish_reason"] == "length"
+    assert metrics["llm_calls"][0]["error_category"] == "empty"
+
+
+def test_blank_length_response_can_recover_on_retry() -> None:
+    responses = iter(
+        [
+            llm_response(text="", finish_reason="length"),
+            llm_response(text="recovered", finish_reason="stop"),
+        ]
+    )
+    client = make_client(lambda request: next(responses))
+
+    response = client.chat(MODEL, [], max_tokens=25)
+
+    assert response.text == "recovered"
+    assert response.finish_reason == "stop"
+    assert response.attempts == 2
+
+
+def test_blank_cache_entry_is_a_miss(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("EVAL_CACHE", "1")
+    request_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        return llm_response(text="fresh")
+
+    client = make_client(handler, cache_dir=tmp_path)
+    body = {
+        "model": MODEL,
+        "messages": [],
+        "temperature": 0.0,
+        "max_tokens": 500,
+    }
+    cache_path = client._cache_path(body)
+    assert cache_path is not None
+    cache_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "text": "  ",
+                "model": MODEL,
+                "finish_reason": "stop",
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "latency_ms": 1,
+                "cost_usd": 0.0,
+                "attempts": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    response = client.chat(MODEL, [])
+
+    assert request_count == 1
+    assert response.text == "fresh"
+    assert response.cache_hit is False
 
 
 def test_eval_cache_is_off_by_default(
@@ -137,6 +231,7 @@ def test_success_returns_text_usage_latency_and_cost(
     response = client.chat(MODEL, [{"role": "user", "content": "hello"}])
 
     assert response.text == "ok"
+    assert response.finish_reason == "stop"
     assert response.prompt_tokens == 100
     assert response.completion_tokens == 20
     assert response.latency_ms == 25
@@ -287,7 +382,10 @@ def test_metrics_record_one_entry_per_call_and_totals() -> None:
     assert len(metrics["llm_calls"]) == 2
     assert metrics["llm_calls"][0]["stage"] == "router"
     assert metrics["llm_calls"][0]["ok"] is True
+    assert metrics["llm_calls"][0]["finish_reason"] == "stop"
     assert metrics["llm_calls"][1]["stage"] == "answer"
     assert metrics["llm_calls"][1]["ok"] is False
+    assert metrics["llm_calls"][1]["finish_reason"] is None
+    assert metrics["llm_calls"][1]["error_category"] == "http_401"
     assert metrics["total_tokens"] == 40
     assert metrics["total_cost_usd"] == pytest.approx(response.cost_usd)
