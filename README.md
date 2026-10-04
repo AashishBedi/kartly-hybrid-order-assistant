@@ -12,6 +12,8 @@ PRE-SUBMISSION CHECKLIST (delete this block before submitting)
 
 A backend service that answers customer questions about their orders and the store's policies, including questions that need both, such as "Can I still return order #1042?".
 
+**Demo video:** [ADD LINK]
+
 **Key idea:** order facts come from SQLite through a fixed set of read-only, per-customer query tools; policy answers come from vector search over versioned documents; and a grounding gate makes the service refuse instead of guess. Safety is enforced in code, not in prompts.
 
 **Stack:** Python, FastAPI, SQLite, ChromaDB, sentence-transformers, Groq (GPT-OSS), Docker Compose.
@@ -321,6 +323,16 @@ pytest -q
 
 ### Evaluation
 
+#### Reproduce the evaluation
+
+This needs a real `GROQ_API_KEY` in `.env` and makes about 80 live Groq calls. The runner enables its response cache, and results go in `eval/results` (see `eval/results/README.md`).
+
+```bash
+python -m eval.run_eval --sleep 5
+python -m eval.judge eval/results/raw_<timestamp>.jsonl
+python -m eval.judge eval/results/raw_<timestamp>.jsonl --exclude U05,C07 --exclude-reason "see README"
+```
+
 **Question set.** 42 labelled questions: 8 data, 8 policy, 9 combined, 5 out of scope, 6 unanswerable (topics the policies do not cover) and 6 adversarial (bulk email request, prompt injection, `DROP TABLE`, another customer's order, SQL in the order ID, "list all orders"). Expected values are not hardcoded: order statuses, totals, counts and return decisions are resolved from the database and today's date when the evaluation runs.
 
 **Systems compared.**
@@ -429,21 +441,3 @@ pytest -q
 - **Validate an answer before caching it.** A successful HTTP response can still contain a blank answer, which should be retried instead of cached.
 - **Do not repeat shared facts in model input.** Showing an order total once prevents the model from adding the same value for every item.
 - **Pace live evaluations.** Spacing requests made it easier to separate product behavior from rate-limit delays.
-
-## Run so far
-
-Copy the environment file, install dependencies, seed the database, and start the API:
-
-```bash
-cp .env.example .env
-pip install -r requirements.txt
-python -m scripts.seed
-uvicorn app.main:app --reload
-```
-
-Open `http://localhost:8000/health` to check the service.
-
-Alternatively, run `docker compose up --build` after creating `.env`.
-
-
-**Demo video:** [ADD LINK]
