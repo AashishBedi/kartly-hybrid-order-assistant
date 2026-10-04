@@ -8,6 +8,7 @@ from app.api.ask import router as ask_router
 from app.api.documents import router as documents_router
 from app.config import settings
 from app.deps import get_embedder, get_store
+from app.observability import configure_metrics_logging
 
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    configure_metrics_logging()
+
     if settings.WARMUP_ON_STARTUP:
         embedder_provider = app.dependency_overrides.get(
             get_embedder,

@@ -1,15 +1,27 @@
 import json
 import logging
+import sys
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.config import settings
-
-
 logger = logging.getLogger("app.observability")
-logger.setLevel(getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO))
+_METRICS_HANDLER_NAME = "kartly.metrics.stdout"
+
+
+def configure_metrics_logging() -> None:
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    if any(handler.get_name() == _METRICS_HANDLER_NAME for handler in logger.handlers):
+        return
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.set_name(_METRICS_HANDLER_NAME)
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
 
 
 @dataclass

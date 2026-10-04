@@ -1,4 +1,5 @@
 import logging
+import sys
 
 import pytest
 from fastapi.testclient import TestClient
@@ -6,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.config import settings
 from app.deps import get_embedder, get_store
 from app.main import app
+from app.observability import configure_metrics_logging, logger as metrics_logger
 
 
 class FakeEmbedder:
@@ -83,3 +85,16 @@ def test_lifespan_logs_failures_without_crashing(
 
     assert "Embedder warm-up failed" in caplog.text
     assert "Chroma warm-up failed" in caplog.text
+
+
+def test_metrics_logger_has_info_stdout_handler() -> None:
+    configure_metrics_logging()
+
+    handlers = [
+        handler
+        for handler in metrics_logger.handlers
+        if isinstance(handler, logging.StreamHandler) and handler.stream is sys.stdout
+    ]
+    assert metrics_logger.level == logging.INFO
+    assert metrics_logger.propagate is False
+    assert any(handler.level == logging.INFO for handler in handlers)
