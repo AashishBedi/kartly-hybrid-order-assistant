@@ -366,6 +366,14 @@ pytest -q
 
 **Reading the numbers honestly.** This is a rule-based automatic judge. With 42 cases, one case is about 2.4 percentage points. Results vary by one or two cases between runs. Run 4 is not a held-out test because fixes followed earlier runs.
 
+**How to read these numbers.**
+
+- The automatic judge matches strings, so it makes mistakes in both directions.
+- The hybrid system has 1/42 automatic unsupported-claim flags: U05, a grounded answer that matches `exchange_policy.md` but belongs to a mislabeled case. The baseline has 15/42; D01, C06 and O04 are flagged only because the ordinary verb "placed" is mistaken for an order status, leaving about 12/42. The other baseline flags were not checked one by one.
+- Some baseline passes are not earned. D01 repeats "delivered" while asking for the customer's name, and C07 mentions 12 months without giving the requested end date.
+- The baseline has no database or policy access, so misses on data questions are expected. More telling are invented details: order totals in D08, a 14-day price-match window and email address in U02, loyalty-point rates in U03, and a support email address in P06 and U05.
+- Manual override: hybrid C04 is an automatic failure in run 4, but its answer gives the correct decision and reason.
+
 ## 8. Known Limitations
 
 - **No authentication.** `/ask` trusts the `customer_id` in the request body. A real deployment must derive it from a verified session or token; the data layer already treats it as server-supplied.
