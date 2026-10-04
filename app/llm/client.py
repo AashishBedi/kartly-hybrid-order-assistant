@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -14,6 +15,9 @@ from uuid import uuid4
 import httpx
 
 from app.observability import record_llm_call
+
+
+_ERROR_CODE_UNSAFE = re.compile(r"[^a-z0-9_]+")
 
 
 class LLMError(Exception):
@@ -170,7 +174,7 @@ class LLMClient:
                         started,
                         attempts,
                         error,
-                        f"http_{response.status_code}",
+                        self._http_error_category(response),
                     )
                     raise error
 
@@ -364,6 +368,24 @@ class LLMClient:
         if finish_reason is not None and not isinstance(finish_reason, str):
             raise LLMError("Malformed LLM response")
         return content, finish_reason
+
+    @staticmethod
+    def _http_error_category(response: httpx.Response) -> str:
+        category = f"http_{response.status_code}"
+        try:
+            payload = response.json()
+        except ValueError:
+            return category
+        if not isinstance(payload, Mapping):
+            return category
+        error = payload.get("error")
+        if not isinstance(error, Mapping):
+            return category
+        code = error.get("code")
+        if not isinstance(code, str):
+            return category
+        slug = _ERROR_CODE_UNSAFE.sub("_", code.casefold()).strip("_")[:40]
+        return f"{category}:{slug}" if slug else category
 
     @staticmethod
     def _token_count(value: Any) -> int:

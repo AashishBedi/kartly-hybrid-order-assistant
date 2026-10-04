@@ -323,6 +323,41 @@ def test_unauthorized_is_not_retried() -> None:
     assert waits == []
 
 
+def test_groq_error_code_is_safely_added_to_http_category(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sensitive_message = "provider detail that must not be stored"
+    sensitive_generation = "generated text that must not be stored"
+    client = make_client(
+        lambda request: httpx.Response(
+            400,
+            json={
+                "error": {
+                    "code": "JSON.Validate/FAILED-" + "x" * 50,
+                    "type": "invalid_request_error",
+                    "message": sensitive_message,
+                    "failed_generation": sensitive_generation,
+                }
+            },
+        )
+    )
+    start_request("groq-error-code")
+
+    with caplog.at_level(logging.INFO, logger="app.observability"):
+        with pytest.raises(LLMError, match="LLM HTTP 400"):
+            client.chat(MODEL, [], stage="router")
+        metrics = finish_request()
+
+    category = metrics["llm_calls"][0]["error_category"]
+    expected_slug = ("json_validate_failed_" + "x" * 50)[:40]
+    assert category == f"http_400:{expected_slug}"
+    assert len(category.removeprefix("http_400:")) == 40
+    assert sensitive_message not in json.dumps(metrics)
+    assert sensitive_generation not in json.dumps(metrics)
+    assert sensitive_message not in caplog.text
+    assert sensitive_generation not in caplog.text
+
+
 def test_missing_choices_raises_llm_error() -> None:
     client = make_client(lambda request: httpx.Response(200, json={"model": MODEL}))
 
