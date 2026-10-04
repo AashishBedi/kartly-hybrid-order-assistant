@@ -269,7 +269,7 @@ flowchart LR
 - Costs are estimates from a configurable price table (the free tier costs nothing).
 
 ```json
-[FILL: paste one real metrics log line from the server output after the logging fix]
+{"request_id":"d79c4fcf-a627-48a8-a968-92a0315f7ec8","total_latency_ms":2491,"llm_calls":[{"stage":"router","model":"openai/gpt-oss-20b","finish_reason":"stop","latency_ms":1169,"prompt_tokens":312,"completion_tokens":98,"cost_usd":0.00010559999999999999,"attempts":1,"cache_hit":false,"ok":true},{"stage":"answer","model":"openai/gpt-oss-120b","finish_reason":"stop","latency_ms":1311,"prompt_tokens":482,"completion_tokens":85,"cost_usd":0.0001233,"attempts":1,"cache_hit":false,"ok":true}],"total_tokens":977,"total_cost_usd":0.00022889999999999998}
 ```
 
 **Evaluation harness**
