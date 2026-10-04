@@ -285,7 +285,7 @@ flowchart LR
 | The keyword fallback sent real questions to `out_of_scope` ("How many orders have I placed?", "Do you offer price matching?") | Seen when the LLM was unavailable in the first live run | Broadened the fallback phrases with table-driven tests |
 | `order 1 OR 1=1` was not blocked by the rule guard | Found while reviewing the evaluation's adversarial case labels | Added narrow tautology and `UNION SELECT` patterns, with tests that normal sentences like "order 1 or 2" still pass |
 | Degraded answers listed order facts but never stated the return decision | Seen in the first live run with no model available | The code-built fallback now leads with the computed decision and window end date |
-| Metrics log lines were missing under `uvicorn` | Tests passed, but the running server printed only access logs | Configured a dedicated metrics logger [CONFIRM: fix committed] |
+| Metrics log lines were missing under `uvicorn` | Tests passed, but the running server printed only access logs | Configured a dedicated metrics logger |
 | The LLM router sometimes failed JSON validation | Per-call metrics with a failure category showed HTTP 400 `json_validate_failed` on 7 of 37 routed requests in two runs; the keyword fallback absorbed them | The router's `max_tokens=100` was too low for `gpt-oss-20b` JSON mode; raising it to 512 reduced the failures to 0 of 37 in run 4 |
 | Blank LLM answers were accepted as successful and cached | The reasoning model sometimes reached its token limit without producing an answer | Treat a blank answer as a failure and retry once with a larger token limit |
 | The answer model doubled an order total | The total appeared on every joined item row, so the model added it more than once | Present order-level fields once, separately from the item rows |
@@ -294,7 +294,7 @@ flowchart LR
 
 ## 7. Testing
 
-The suite has **224 tests** and uses fakes for the LLM and embedder, so it needs no network and no API key.
+The suite has **273 tests** and uses fakes for the LLM and embedder, so it needs no network and no API key.
 
 ```bash
 pytest -q
@@ -314,6 +314,10 @@ pytest -q
 | Policy and grounding | Distance threshold, empty store, every route and evidence combination | `tests/test_policy_grounding.py` |
 | `/ask` endpoint | All route types, blocked requests, cross-customer isolation, ungrounded refusals, LLM failure fallback, input validation | `tests/test_ask_api.py` |
 | Evaluation cases | Schema, unique IDs, category coverage, order IDs exist and belong to the stated customer | `tests/test_eval_cases.py` |
+| Evaluation cache | Opt-in cache miss and hit, disabled-by-default behavior, blank entries treated as misses, blank and failed responses not cached | `tests/test_llm_client.py` |
+| LLM-only baseline | One answer-model call using only the generic support prompt and question, with no retrieved context or customer ID | `tests/test_eval_baseline.py` |
+| Evaluation runner | Raw JSONL output, resolved checks and metrics, error continuation and secret redaction, resume and filtering, embedder warm-up, progress and interrupt handling | `tests/test_eval_runner.py` |
+| Evaluation judge | Pass, failure, unsupported-claim and error verdicts; category, latency, cost, degraded and cache summaries; review CSV, adjusted exclusions, CLI output and claim matching | `tests/test_eval_judge.py` |
 
 ### Evaluation
 
@@ -352,8 +356,8 @@ pytest -q
 
 | System | p50 latency (ms) | p95 latency (ms) | Mean cost per case (USD) | Degraded count |
 |---|---:|---:|---:|---:|
-| Hybrid | 2185.5 | 2752.85 | 0.0002251035714285714 | 0 |
-| LLM-only baseline | 1565.0 | 1906.35 | 0.00018287857142857143 | 0 |
+| Hybrid | 2186 | 2753 | 0.000225 | 0 |
+| LLM-only baseline | 1565 | 1906 | 0.000183 | 0 |
 
 **Development runs (overall passes only).**
 
@@ -364,13 +368,12 @@ pytest -q
 | 3 | `judged_20261004T100412_837014Z.json` | Same product code, with 5 s pacing | 39/42 | 22/42 |
 | 4 | `judged_20261004T103126_190493Z.json` | After raising router `max_tokens` to 512 | 39/42 | 23/42 |
 
-**Reading the numbers honestly.** This is a rule-based automatic judge. With 42 cases, one case is about 2.4 percentage points. Results vary by one or two cases between runs. Run 4 is not a held-out test because fixes followed earlier runs.
-
 **How to read these numbers.**
 
+- This is a rule-based automatic judge. With 42 cases, one case is about 2.4 percentage points. Results vary by one or two cases between runs. Run 4 is not a held-out test because fixes followed earlier runs.
 - The automatic judge matches strings, so it makes mistakes in both directions.
 - The hybrid system has 1/42 automatic unsupported-claim flags: U05, a grounded answer that matches `exchange_policy.md` but belongs to a mislabeled case. The baseline has 15/42; D01, C06 and O04 are flagged only because the ordinary verb "placed" is mistaken for an order status, leaving about 12/42. The other baseline flags were not checked one by one.
-- Some baseline passes are not earned. D01 repeats "delivered" while asking for the customer's name, and C07 mentions 12 months without giving the requested end date.
+- Some baseline passes are not earned. D01 repeats "delivered" while asking for the customer's name, and C07 gives a typical warranty length of one year without the requested end date.
 - The baseline has no database or policy access, so misses on data questions are expected. More telling are invented details: order totals in D08, a 14-day price-match window and email address in U02, loyalty-point rates in U03, and a support email address in P06 and U05.
 - Manual override: hybrid C04 is an automatic failure in run 4, but its answer gives the correct decision and reason.
 
