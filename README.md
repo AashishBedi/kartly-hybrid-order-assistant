@@ -79,6 +79,9 @@ Abbreviated response:
 
 [`QUERIES.md`](QUERIES.md) contains 30 additional manual test prompts covering data, policy, combined, out-of-scope, adversarial, and unsupported questions. They are prompt examples, not an implemented `Ask-Kartly` CLI; most order examples assume `customer_id=13`.
 
+
+[`Prompts.docx`](Prompts.docx) contains all the prompts used while planning, building and testing Kartly.
+
 ## Architecture
 
 ```mermaid
