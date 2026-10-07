@@ -20,6 +20,8 @@ Kartly is a fictional online store. Its customers ask three kinds of questions:
 - **Policy questions:** "How long does express shipping take?" The answer lives in policy documents.
 - **Combined questions:** "Can I still return order #266?" The answer needs the delivery date from the database and the return window from the policy.
 
+The assignment's main comparison is a **vector-only baseline**: it retrieves the top four policy chunks and makes one answer-model call, but has no SQL access, router, guard or relevance threshold. It can answer policy questions, but it cannot retrieve a customer's order facts or enforce the hybrid pipeline's routing and safety controls. An **LLM-only system** with no retrieval at all is included only as a secondary reference.
+
 Two common designs fail here:
 
 - **A plain RAG chatbot** cannot see order data. It either refuses order questions or invents answers.
@@ -33,7 +35,7 @@ The service must answer correctly, show where each answer came from, keep every 
 - **Async ingestion:** upload policy documents through a background job, and replace an updated document with no duplicate or outdated chunks.
 - **Safe data access:** read-only database access, a customer can only see their own orders, and bulk-data or write attempts are blocked even if the language model is fooled.
 - **Grounded answers:** if the data or policies do not support an answer, say so.
-- **Measured quality:** compare the hybrid system against LLM-only and vector-only baselines on a labelled question set.
+- **Measured quality:** compare the hybrid system primarily against the assignment's vector-only baseline, with an LLM-only system as a secondary reference, on a labelled question set.
 - **Reliability and observability:** timeouts, retries, a clear fallback on failure, and per-request logs of latency, tokens and estimated cost.
 
 ## 3. Tech Stack
@@ -269,7 +271,7 @@ flowchart LR
 ```
 
 **Evaluation harness**
-- Labelled question set, LLM-only and vector-only baselines, a runner that saves raw outputs, and separate judging so results can be re-judged without new LLM calls.
+- Labelled question set, the assignment's vector-only baseline and an LLM-only secondary reference, a runner that saves raw outputs, and separate judging so results can be re-judged without new LLM calls.
 
 ## 6. Challenges Faced
 
@@ -311,7 +313,7 @@ pytest -q
 | `/ask` endpoint | All route types, blocked requests, cross-customer isolation, ungrounded refusals, LLM failure fallback, input validation | `tests/test_ask_api.py` |
 | Evaluation cases | Schema, unique IDs, category coverage, order IDs exist and belong to the stated customer | `tests/test_eval_cases.py` |
 | Evaluation cache | Opt-in cache miss and hit, disabled-by-default behavior, blank entries treated as misses, blank and failed responses not cached | `tests/test_llm_client.py` |
-| Evaluation baselines | LLM-only and vector-only systems; the latter uses top-four retrieval with no threshold or grounding gate, one answer-model call, and no SQL or customer ID | `tests/test_eval_baseline.py` |
+| Evaluation comparisons | Vector-only baseline using top-four retrieval with no threshold or grounding gate, one answer-model call, and no SQL or customer ID; LLM-only secondary reference with no retrieval | `tests/test_eval_baseline.py` |
 | Evaluation runner | Raw JSONL output, resolved checks and metrics, error continuation and secret redaction, resume and filtering, embedder warm-up, progress and interrupt handling | `tests/test_eval_runner.py` |
 | Evaluation judge | Pass, failure, unsupported-claim and error verdicts; category, latency, cost, degraded and cache summaries; review CSV, adjusted exclusions, CLI output and claim matching | `tests/test_eval_judge.py` |
 
@@ -331,8 +333,8 @@ python -m eval.judge eval/results/raw_<timestamp>.jsonl --exclude U05,C07 --excl
 
 **Systems compared.**
 - **Hybrid:** the full `/ask` pipeline.
-- **LLM-only baseline:** one answer-model call with only the question and a generic support prompt.
-- **Vector-only baseline:** the same embedder and policy store retrieve the top four chunks without a distance threshold or grounding gate. The same answer model then makes exactly one call with those excerpts, with **no SQL tools, router or customer ID**.
+- **Vector-only baseline (the assignment's main comparison):** the same embedder and policy store retrieve the top four policy chunks. The answer model then makes one call with those excerpts, with **no SQL, router, guard or relevance threshold**.
+- **LLM-only (secondary reference):** one answer-model call with only the question and a generic support prompt, with no retrieval at all.
 
 **How each answer was judged.** Rule-based automatic judge, with no model judge:
 - order status, total and item names must appear in the answer
@@ -342,56 +344,63 @@ python -m eval.judge eval/results/raw_<timestamp>.jsonl --exclude U05,C07 --excl
 - must-not-contain checks for another customer's name or email domain
 - an answer is **unsupported** if it states a fact that neither the SQL result nor the retrieved chunks contain, or answers a question that should have been refused
 
-**Recorded results (legacy two-system run).** These checked-in results compare
-the hybrid and LLM-only systems and predate the vector-only third system. A
-replacement live run is not included; the three-system path is covered with
-mocked tests and makes no live Groq calls during the test suite.
+**Run 5 headline results.** The full 42-case table is the headline result, from `judged_20261007T090734_541502Z.json` (`raw_20261007T085604_828267Z.jsonl`).
 
-| Category | Hybrid passes | Baseline passes | Hybrid unsupported | Baseline unsupported |
-|---|---:|---:|---:|---:|
-| Overall | 39/42 | 23/42 | 1/42 | 15/42 |
-| Data | 8/8 | 2/8 | 0/8 | 2/8 |
-| Policy | 8/8 | 6/8 | 0/8 | 3/8 |
-| Combined | 7/9 | 7/9 | 0/9 | 3/9 |
-| Out of scope | 5/5 | 2/5 | 0/5 | 2/5 |
-| Unanswerable | 5/6 | 2/6 | 1/6 | 5/6 |
-| Adversarial | 6/6 | 4/6 | 0/6 | 0/6 |
+| Category | Hybrid passes | Hybrid unsupported | Vector-only passes | Vector-only unsupported | LLM-only passes | LLM-only unsupported |
+|---|---:|---:|---:|---:|---:|---:|
+| Overall | 40/42 | 1/42 | 29/42 | 2/42 | 23/42 | 22/42 |
+| Data | 8/8 | 0/8 | 1/8 | 0/8 | 2/8 | 3/8 |
+| Policy | 8/8 | 0/8 | 8/8 | 0/8 | 5/8 | 5/8 |
+| Combined | 8/9 | 0/9 | 5/9 | 0/9 | 7/9 | 6/9 |
+| Out of scope | 5/5 | 0/5 | 4/5 | 1/5 | 2/5 | 2/5 |
+| Unanswerable | 5/6 | 1/6 | 5/6 | 1/6 | 2/6 | 5/6 |
+| Adversarial | 6/6 | 0/6 | 6/6 | 0/6 | 5/6 | 1/6 |
 
-**Adjusted view (excludes U05 and C07 for both systems).**
+**Adjusted view (excludes U05 and C07 for all systems).**
 
-| System | Passes | Unsupported |
-|---|---:|---:|
-| Hybrid | 39/40 | 0/40 |
-| LLM-only baseline | 21/40 | 14/40 |
+| Category | Hybrid passes | Hybrid unsupported | Vector-only passes | Vector-only unsupported | LLM-only passes | LLM-only unsupported |
+|---|---:|---:|---:|---:|---:|---:|
+| Overall | 40/40 | 0/40 | 28/40 | 1/40 | 22/40 | 20/40 |
+| Data | 8/8 | 0/8 | 1/8 | 0/8 | 2/8 | 3/8 |
+| Policy | 8/8 | 0/8 | 8/8 | 0/8 | 5/8 | 5/8 |
+| Combined | 8/8 | 0/8 | 4/8 | 0/8 | 6/8 | 5/8 |
+| Out of scope | 5/5 | 0/5 | 4/5 | 1/5 | 2/5 | 2/5 |
+| Unanswerable | 5/5 | 0/5 | 5/5 | 0/5 | 2/5 | 4/5 |
+| Adversarial | 6/6 | 0/6 | 6/6 | 0/6 | 5/6 | 1/6 |
+
+**Overall operational metrics (full 42-case run).**
 
 | System | p50 latency (ms) | p95 latency (ms) | Mean cost per case (USD) | Degraded count |
 |---|---:|---:|---:|---:|
-| Hybrid | 2186 | 2753 | 0.000225 | 0 |
-| LLM-only baseline | 1565 | 1906 | 0.000183 | 0 |
+| Hybrid | 2365 | 4107 | 0.000225 | 0 |
+| Vector-only baseline | 1796 | 6952 | 0.000189 | 0 |
+| LLM-only secondary reference | 1908 | 2568 | 0.000186 | 0 |
 
 **Development runs (overall passes only).**
 
-| Run | Judged result | Change | Hybrid passes | Baseline passes |
-|---:|---|---|---:|---:|
-| 1 | `judged_20261004T094054_848382Z.json` | As first built | 37/42 | 23/42 |
-| 2 | `judged_20261004T094058_331417Z.json` | After fixes for blank LLM output, doubled order total, fallback router default, and evaluation warm-up | 39/42 | 23/42 |
-| 3 | `judged_20261004T100412_837014Z.json` | Same product code, with 5 s pacing | 39/42 | 22/42 |
-| 4 | `judged_20261004T103126_190493Z.json` | After raising router `max_tokens` to 512 | 39/42 | 23/42 |
+Runs 1-4 had no vector-only system.
+
+| Run | Judged result | Change | Hybrid passes | Vector-only passes | LLM-only passes |
+|---:|---|---|---:|---:|---:|
+| 1 | `judged_20261004T094054_848382Z.json` | As first built | 37/42 | Not run | 23/42 |
+| 2 | `judged_20261004T094058_331417Z.json` | After fixes for blank LLM output, doubled order total, fallback router default, and evaluation warm-up | 39/42 | Not run | 23/42 |
+| 3 | `judged_20261004T100412_837014Z.json` | Same product code, with 5 s pacing | 39/42 | Not run | 22/42 |
+| 4 | `judged_20261004T103126_190493Z.json` | After raising router `max_tokens` to 512 | 39/42 | Not run | 23/42 |
+| 5 | `judged_20261007T090734_541502Z.json` | Final three-system run | 40/42 | 29/42 | 23/42 |
 
 **How to read these numbers.**
 
-- This is a rule-based automatic judge. With 42 cases, one case is about 2.4 percentage points. Results vary by one or two cases between runs. Run 4 is not a held-out test because fixes followed earlier runs.
+- This is a rule-based automatic judge, and the full 42-case result remains the headline.
 - The automatic judge matches strings, so it makes mistakes in both directions.
-- The hybrid system has 1/42 automatic unsupported-claim flags: U05, a grounded answer that matches `exchange_policy.md` but belongs to a mislabeled case. The baseline has 15/42; D01, C06 and O04 are flagged only because the ordinary verb "placed" is mistaken for an order status, leaving about 12/42. The other baseline flags were not checked one by one.
-- Some baseline passes are not earned. D01 repeats "delivered" while asking for the customer's name, and C07 gives a typical warranty length of one year without the requested end date.
-- The baseline has no database or policy access, so misses on data questions are expected. More telling are invented details: order totals in D08, a 14-day price-match window and email address in U02, loyalty-point rates in U03, and a support email address in P06 and U05.
-- Manual override: hybrid C04 is an automatic failure in run 4, but its answer gives the correct decision and reason.
+- The adjusted view excludes U05 because it is labelled unanswerable despite coverage in `exchange_policy.md`, and C07 because its check requires restating the warranty length even though the question asks for the end date.
+- The vector-only baseline matches the hybrid system on policy questions (8/8), but without SQL it passes 1/8 data questions and 5/9 combined questions, compared with the hybrid system's 8/8 and 8/9.
+- The LLM-only system is a secondary reference, not the assignment's baseline; it has no retrieval or database access.
 
 ## 8. Known Limitations
 
 - **No authentication.** `/ask` trusts the `customer_id` in the request body. A real deployment must derive it from a verified session or token; the data layer already treats it as server-supplied.
 - **Small evaluation set** written by one person, judged by rules that I wrote; it shows direction, not statistical proof.
-- **The judge matches fixed phrases.** An answer can pass or fail because of wording. Manual review shows that C04 in run 4 is an automatic failure even though the answer gives the correct decision and reason, because "isn't returnable" is not in the phrase list.
+- **The judge matches fixed phrases.** An answer can pass or fail because of wording, so the results need qualitative review as well as score comparison.
 - **Two evaluation cases have defects.** Reading the failures showed that U05 is labeled unanswerable even though `exchange_policy.md` covers it, while C07 requires the answer to repeat "12" even though the question asks for the end date. The adjusted view excludes both cases, but the full 42-case results remain the headline.
 - **Answers vary between runs.** The unsupported-claim check only catches concrete tokens, and the system sometimes reasons from what a policy does not list.
 - **Keyword-based tool planning.** Unusual phrasings can pick the wrong query tool.
