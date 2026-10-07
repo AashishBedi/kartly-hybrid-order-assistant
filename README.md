@@ -57,10 +57,14 @@ The service must answer correctly, show where each answer came from, keep every 
 - Docker and Docker Compose, **or** Python 3.11+
 - A Groq API key from [console.groq.com](https://console.groq.com). The key is read from `.env` and is never committed.
 
+`GROQ_API_KEY` is the only setting you must provide; `.env.example` contains
+working defaults for everything else. Without a key, the API still starts and
+serves fallback answers with `degraded: true`.
+
 ### Run with Docker (one command)
 
 ```bash
-cp .env.example .env      # then set GROQ_API_KEY in .env
+cp .env.example .env      # set only GROQ_API_KEY in .env
 docker compose up --build
 ```
 
@@ -71,7 +75,7 @@ On first start the container seeds the database (if missing), ingests the nine p
 ```bash
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env                                 # set GROQ_API_KEY
+cp .env.example .env                                 # set only GROQ_API_KEY
 python -m scripts.seed
 python -m scripts.ingest_policies
 python -m uvicorn app.main:app --port 8000

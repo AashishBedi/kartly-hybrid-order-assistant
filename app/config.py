@@ -14,9 +14,8 @@ class Settings(BaseSettings):
     # costs nothing, but we log an estimate as if paid.
     PRICE_INPUT_PER_MTOK: float = 0.10
     PRICE_OUTPUT_PER_MTOK: float = 0.30
-    # Check the Groq console for current model names before setting these values.
-    ROUTER_MODEL: str = "replace-with-current-groq-router-model"
-    ANSWER_MODEL: str = "replace-with-current-groq-answer-model"
+    ROUTER_MODEL: str = "openai/gpt-oss-20b"
+    ANSWER_MODEL: str = "openai/gpt-oss-120b"
     LOG_LEVEL: str = "INFO"
     CHROMA_PATH: Path = Path("data/chroma")
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"

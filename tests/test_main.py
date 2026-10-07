@@ -66,6 +66,41 @@ def test_lifespan_skips_warmup_when_disabled(
         assert client.get("/health").status_code == 200
 
 
+@pytest.mark.parametrize(
+    ("api_key", "router_model", "answer_model"),
+    [
+        ("", "openai/gpt-oss-20b", "openai/gpt-oss-120b"),
+        ("test-secret", "replace-with-router-model", "openai/gpt-oss-120b"),
+        ("test-secret", "openai/gpt-oss-20b", "placeholder-answer-model"),
+    ],
+)
+def test_lifespan_warns_once_for_degraded_llm_config(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    api_key: str,
+    router_model: str,
+    answer_model: str,
+) -> None:
+    monkeypatch.setattr(settings, "WARMUP_ON_STARTUP", False)
+    monkeypatch.setattr(settings, "GROQ_API_KEY", api_key)
+    monkeypatch.setattr(settings, "ROUTER_MODEL", router_model)
+    monkeypatch.setattr(settings, "ANSWER_MODEL", answer_model)
+
+    with caplog.at_level(logging.WARNING, logger="app.main"):
+        with TestClient(app) as client:
+            assert client.get("/health").status_code == 200
+
+    warnings = [
+        record
+        for record in caplog.records
+        if record.name == "app.main"
+        and "Incomplete LLM configuration" in record.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "degraded mode" in warnings[0].getMessage()
+    assert not api_key or api_key not in warnings[0].getMessage()
+
+
 def test_lifespan_logs_failures_without_crashing(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
