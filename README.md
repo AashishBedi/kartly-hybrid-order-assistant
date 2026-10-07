@@ -422,11 +422,11 @@ Runs 1-4 had no vector-only system.
 
 ## AI Tool Disclosure and Assumptions
 
-**AI tools used** [CONFIRM: edit to match what actually happened]
-- Claude was used for planning, design discussion and writing step-by-step prompts.
-- A coding agent [CONFIRM: tool and model name] generated most of the code from those prompts, in small commits.
-- AI assistance was also used for test writing and README drafting.
-- I ran the test suite and the live demo myself and reviewed the results after each step. I can walk through any module, the evaluation method, and make a small change live.
+**AI tools used**
+
+- OpenAI Codex with GPT-5.6 Sol (High reasoning) was used as the primary coding agent while working locally.
+- I used it through a prompt-by-prompt workflow to implement and refine the backend, tests, Docker setup, evaluation tooling, and documentation.
+- I reviewed the generated changes, ran the test suite and Docker workflow, inspected evaluation failures, and made the final design and evaluation decisions.
 
 **Assumptions**
 - Kartly data is fictional; seeded dates are relative to the day the seed script runs.
