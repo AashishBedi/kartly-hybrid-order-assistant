@@ -390,11 +390,10 @@ Runs 1-4 had no vector-only system.
 
 **How to read these numbers.**
 
-- This is a rule-based automatic judge, and the full 42-case result remains the headline.
-- The automatic judge matches strings, so it makes mistakes in both directions.
-- The adjusted view excludes U05 because it is labelled unanswerable despite coverage in `exchange_policy.md`, and C07 because its check requires restating the warranty length even though the question asks for the end date.
-- The vector-only baseline matches the hybrid system on policy questions (8/8), but without SQL it passes 1/8 data questions and 5/9 combined questions, compared with the hybrid system's 8/8 and 8/9.
-- The LLM-only system is a secondary reference, not the assignment's baseline; it has no retrieval or database access.
+- This is an automatic string-matching judge. In a 42-case set, one case is about 2.4 percentage points; across adjacent recorded runs, pass totals are unchanged or vary by one or two cases.
+- The full 42-case table is the headline. U05 was found to be mislabeled as unanswerable even though `exchange_policy.md` covers it, and C07 was found to require the warranty length even though its question asks for the end date. Because both defects were identified by reading the failures, the adjusted view is secondary.
+- The vector-only baseline ties the hybrid on policy (8/8), adversarial (6/6) and unanswerable (5/6). It answers policy questions from retrieved text; in every adversarial or unanswerable case it passes, declining or saying the documents cannot provide the requested fact is correct. With no order data, it passes only 1/8 data and 5/9 combined questions, compared with the hybrid's 8/8 and 8/9, so the hybrid's gain is concentrated in the data and combined categories.
+- The LLM-only secondary reference has no order-data or policy access and has 22/42 unsupported flags. In four of those cases, the judge flags the ordinary verb "placed" as though it were an order-status claim, so the unsupported count includes confirmed string-matching false positives.
 
 ## 8. Known Limitations
 
