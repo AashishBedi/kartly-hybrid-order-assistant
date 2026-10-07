@@ -127,7 +127,12 @@ class EvidenceContext:
         if self._owns_connection and self.connection is not None:
             self.connection.close()
 
-    def collect(self, record: dict[str, Any]) -> tuple[set[tuple[str, str]], bool]:
+    def collect(
+        self,
+        record: dict[str, Any],
+        *,
+        system: str = "hybrid",
+    ) -> tuple[set[tuple[str, str]], bool]:
         allowed = _claims_from_resolved_checks(record.get("resolved_checks", []))
         allowed.update(
             claim.key
@@ -135,7 +140,10 @@ class EvidenceContext:
             if claim.kind == "order_id"
         )
         complete = True
-        sources = record.get("evidence_sources") or {}
+        sources_key = (
+            "evidence_sources" if system == "hybrid" else "baseline_sources"
+        )
+        sources = record.get(sources_key) or {}
 
         for source in sources.get("sql", []):
             try:
@@ -268,16 +276,18 @@ def judge_file(
     verdicts: list[dict[str, Any]] = []
     try:
         for record in records:
-            allowed_claims, evidence_complete = evidence.collect(record)
-            systems = {
-                system: _judge_system(
+            systems = {}
+            for system in SYSTEMS:
+                allowed_claims, evidence_complete = evidence.collect(
+                    record,
+                    system=system,
+                )
+                systems[system] = _judge_system(
                     record,
                     system,
                     allowed_claims=allowed_claims,
                     evidence_complete=evidence_complete,
                 )
-                for system in SYSTEMS
-            }
             verdicts.append(
                 {
                     "case_id": record.get("case_id", record.get("id")),

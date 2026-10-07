@@ -1,4 +1,4 @@
-"""Run Kartly's hybrid and LLM-only systems and save unjudged results."""
+"""Run Kartly's hybrid and vector-only systems and save unjudged results."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from app.db.connection import get_readonly_connection
 from app.deps import get_embedder, get_llm_client, get_store
 from app.llm.client import LLMClient
 from app.pipeline.ask import handle_ask
-from eval.baseline import answer_baseline
+from eval.baseline import answer_vector_only
 from eval.resolve import resolve_case
 
 
@@ -256,16 +256,21 @@ def _evaluate_case(
 
     baseline_started = time.perf_counter()
     try:
-        baseline = answer_baseline(
+        baseline = answer_vector_only(
             str(case["question"]),
+            store=store,
+            embedder=embedder,
             llm_client=llm_client,
         )
         record["baseline_answer"] = baseline["answer"]
+        record["baseline_sources"] = {
+            "chunks": list(baseline.get("chunk_ids", []))
+        }
         record["baseline_cache_hit"] = bool(baseline.get("cache_hit", False))
         record["baseline_metrics"] = {
             key: value
             for key, value in baseline.items()
-            if key not in {"answer", "cache_hit"}
+            if key not in {"answer", "cache_hit", "chunk_ids"}
         }
     except Exception as exc:
         errors.append(f"baseline: {_safe_error(exc)}")
@@ -332,6 +337,7 @@ def _empty_record(case: dict[str, Any]) -> dict[str, Any]:
         "hybrid_metrics": {},
         "hybrid_cache_hits": [],
         "baseline_answer": None,
+        "baseline_sources": {"chunks": []},
         "baseline_metrics": {},
         "baseline_cache_hit": None,
         "error": None,

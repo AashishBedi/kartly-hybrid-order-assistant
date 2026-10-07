@@ -56,6 +56,7 @@ def raw_case(
         "route": category,
         "tools_used": [],
         "evidence_sources": {"sql": [], "chunks": []},
+        "baseline_sources": {"chunks": []},
         "hybrid_metrics": metrics(index * 10, index / 10, hybrid=True),
         "baseline_answer": baseline_answer,
         "baseline_metrics": metrics(index * 10 + 1, index / 100, hybrid=False),
@@ -372,3 +373,38 @@ def test_generic_no_information_refusal_passes_but_concrete_answer_fails(
     assert case["systems"]["hybrid"]["unsupported_claim"] is False
     assert case["systems"]["baseline"]["case_pass"] is False
     assert case["systems"]["baseline"]["unsupported_claim"] is True
+
+
+def test_baseline_claims_use_vector_baseline_chunks_only(tmp_path: Path) -> None:
+    record = raw_case(
+        "P1",
+        "policy",
+        "How long is the special return window?",
+        [],
+        "The special return window is 45 days.",
+        "The special return window is 45 days.",
+        1,
+    )
+    record["baseline_sources"] = {"chunks": ["returns:v1:0"]}
+    raw_path = tmp_path / "raw_vector_baseline.jsonl"
+    raw_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    class FakeStore:
+        def get_chunks(self, chunk_ids: list[str]) -> dict[str, str]:
+            assert chunk_ids == ["returns:v1:0"]
+            return {
+                "returns:v1:0": "The special return window is 45 days."
+            }
+
+    judged_path, _ = judge_file(
+        raw_path,
+        results_dir=tmp_path / "results",
+        store=FakeStore(),
+        timestamp="20261004T140000_000000Z",
+    )
+    systems = json.loads(judged_path.read_text(encoding="utf-8"))["cases"][0][
+        "systems"
+    ]
+
+    assert systems["hybrid"]["flagged_tokens"] == ["45 days"]
+    assert systems["baseline"]["flagged_tokens"] == []

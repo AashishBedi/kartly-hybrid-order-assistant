@@ -201,6 +201,7 @@ def test_three_cases_are_saved_as_valid_raw_jsonl_and_errors_continue(
     assert records[0]["evidence_sources"]["sql"]
     assert len(records[0]["hybrid_metrics"]["llm_calls"]) == 2
     assert records[0]["baseline_answer"] == "Mocked baseline answer."
+    assert records[0]["baseline_sources"] == {"chunks": ["returns:v1:0"]}
     assert records[0]["baseline_metrics"]["total_tokens"] == 11
     assert records[0]["error"] is None
 
