@@ -1,4 +1,4 @@
-"""Run Kartly's hybrid and vector-only systems and save unjudged results."""
+"""Run Kartly's hybrid, LLM-only, and vector-only evaluation systems."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from app.db.connection import get_readonly_connection
 from app.deps import get_embedder, get_llm_client, get_store
 from app.llm.client import LLMClient
 from app.pipeline.ask import handle_ask
-from eval.baseline import answer_vector_only
+from eval.baseline import answer_baseline, answer_vector_only
 from eval.resolve import resolve_case
 
 
@@ -256,27 +256,48 @@ def _evaluate_case(
 
     baseline_started = time.perf_counter()
     try:
-        baseline = answer_vector_only(
+        baseline = answer_baseline(
             str(case["question"]),
-            store=store,
-            embedder=embedder,
             llm_client=llm_client,
         )
         record["baseline_answer"] = baseline["answer"]
-        record["baseline_sources"] = {
-            "chunks": list(baseline.get("chunk_ids", []))
-        }
         record["baseline_cache_hit"] = bool(baseline.get("cache_hit", False))
         record["baseline_metrics"] = {
             key: value
             for key, value in baseline.items()
-            if key not in {"answer", "cache_hit", "chunk_ids"}
+            if key not in {"answer", "cache_hit"}
         }
     except Exception as exc:
         errors.append(f"baseline: {_safe_error(exc)}")
     finally:
         if timings is not None:
             timings["baseline"] = time.perf_counter() - baseline_started
+
+    vector_only_started = time.perf_counter()
+    try:
+        vector_only = answer_vector_only(
+            str(case["question"]),
+            store=store,
+            embedder=embedder,
+            llm_client=llm_client,
+        )
+        record["vector_only_answer"] = vector_only["answer"]
+        record["vector_only_chunk_ids"] = list(
+            vector_only.get("chunk_ids", [])
+        )
+        record["vector_only_cache_hit"] = bool(
+            vector_only.get("cache_hit", False)
+        )
+        record["vector_only_metrics"] = {
+            key: value
+            for key, value in vector_only.items()
+            if key not in {"answer", "cache_hit", "chunk_ids"}
+        }
+    except Exception as exc:
+        errors.append(f"vector_only: {_safe_error(exc)}")
+    finally:
+        if timings is not None:
+            timings["vector_only"] = time.perf_counter() - vector_only_started
 
     record["error"] = "; ".join(errors) if errors else None
     return record
@@ -294,14 +315,21 @@ def _print_completed_progress(
     if hybrid_status == "ok" and record.get("degraded"):
         hybrid_status = "degraded"
     baseline_status = "error" if _stage_has_error(record, "baseline") else "ok"
+    vector_only_status = (
+        "error" if _stage_has_error(record, "vector_only") else "ok"
+    )
     cache_hits = sum(
         bool(item.get("cache_hit"))
         for item in record.get("hybrid_cache_hits", [])
-    ) + int(bool(record.get("baseline_cache_hit")))
+    ) + int(bool(record.get("baseline_cache_hit"))) + int(
+        bool(record.get("vector_only_cache_hit"))
+    )
     print(
         f"[{index}/{total}] {case['id']} {case['category']} "
         f"hybrid={hybrid_status} {timings.get('hybrid', 0.0):.2f}s "
         f"baseline={baseline_status} {timings.get('baseline', 0.0):.2f}s "
+        f"vector_only={vector_only_status} "
+        f"{timings.get('vector_only', 0.0):.2f}s "
         f"cache_hits={cache_hits}",
         file=sys.stderr,
         flush=True,
@@ -340,6 +368,10 @@ def _empty_record(case: dict[str, Any]) -> dict[str, Any]:
         "baseline_sources": {"chunks": []},
         "baseline_metrics": {},
         "baseline_cache_hit": None,
+        "vector_only_answer": None,
+        "vector_only_chunk_ids": [],
+        "vector_only_metrics": {},
+        "vector_only_cache_hit": None,
         "error": None,
     }
 
@@ -417,7 +449,10 @@ def _non_negative_float(value: str) -> float:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Save raw Kartly hybrid and baseline evaluation results."
+        description=(
+            "Save raw Kartly hybrid, LLM-only, and vector-only evaluation "
+            "results."
+        )
     )
     parser.add_argument("--limit", type=_non_negative_int)
     parser.add_argument("--ids", help="Comma-separated case IDs")

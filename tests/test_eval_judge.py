@@ -56,7 +56,6 @@ def raw_case(
         "route": category,
         "tools_used": [],
         "evidence_sources": {"sql": [], "chunks": []},
-        "baseline_sources": {"chunks": []},
         "hybrid_metrics": metrics(index * 10, index / 10, hybrid=True),
         "baseline_answer": baseline_answer,
         "baseline_metrics": metrics(index * 10 + 1, index / 100, hybrid=False),
@@ -131,6 +130,8 @@ def test_judge_records_pass_fail_unsupported_error_and_summary(
     judged = json.loads(judged_path.read_text(encoding="utf-8"))
     cases = {case["case_id"]: case for case in judged["cases"]}
 
+    assert set(judged["summary"]["overall"]) == {"hybrid", "baseline"}
+    assert set(cases["S1"]["systems"]) == {"hybrid", "baseline"}
     assert cases["S1"]["systems"]["hybrid"]["case_pass"] is True
     assert cases["S1"]["systems"]["baseline"]["case_pass"] is False
     assert cases["S1"]["systems"]["baseline"]["flagged_tokens"] == [
@@ -264,6 +265,7 @@ def test_cli_prints_full_and_adjusted_summary_tables(
     assert "category" in output
     assert "hybrid passes" in output
     assert "baseline unsupported" in output
+    assert "vector_only" not in output
     assert "overall" in output
     assert "data" in output
 
@@ -375,9 +377,11 @@ def test_generic_no_information_refusal_passes_but_concrete_answer_fails(
     assert case["systems"]["baseline"]["unsupported_claim"] is True
 
 
-def test_baseline_claims_use_vector_baseline_chunks_only(tmp_path: Path) -> None:
-    record = raw_case(
-        "P1",
+def test_three_system_raw_is_judged_summarized_and_reviewed(
+    tmp_path: Path,
+) -> None:
+    first = raw_case(
+        "V1",
         "policy",
         "How long is the special return window?",
         [],
@@ -385,9 +389,56 @@ def test_baseline_claims_use_vector_baseline_chunks_only(tmp_path: Path) -> None
         "The special return window is 45 days.",
         1,
     )
-    record["baseline_sources"] = {"chunks": ["returns:v1:0"]}
-    raw_path = tmp_path / "raw_vector_baseline.jsonl"
-    raw_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    first.update(
+        {
+            "vector_only_answer": "The special return window is 45 days.",
+            "vector_only_chunk_ids": ["returns:v1:0"],
+            "vector_only_metrics": metrics(12, 0.02, hybrid=False),
+            "vector_only_cache_hit": True,
+        }
+    )
+    second = raw_case(
+        "V2",
+        "policy",
+        "How many days do refunds take?",
+        [{"kind": "policy_number", "value": "30"}],
+        "Refunds take 30 days.",
+        "Refunds take 30 days.",
+        2,
+    )
+    second.update(
+        {
+            "vector_only_answer": "Refunds take 30 days.",
+            "vector_only_chunk_ids": [],
+            "vector_only_metrics": metrics(22, 0.04, hybrid=False),
+            "vector_only_cache_hit": False,
+        }
+    )
+    third = raw_case(
+        "V3",
+        "data",
+        "Where is order 1?",
+        [{"kind": "order_status", "value": "delivered"}],
+        "Order 1 is delivered.",
+        "Order 1 is delivered.",
+        3,
+        error="vector_only: unavailable",
+    )
+    third.update(
+        {
+            "vector_only_answer": None,
+            "vector_only_chunk_ids": [],
+            "vector_only_metrics": {},
+            "vector_only_cache_hit": None,
+        }
+    )
+    raw_path = tmp_path / "raw_three_systems.jsonl"
+    raw_path.write_text(
+        "".join(
+            json.dumps(record) + "\n" for record in (first, second, third)
+        ),
+        encoding="utf-8",
+    )
 
     class FakeStore:
         def get_chunks(self, chunk_ids: list[str]) -> dict[str, str]:
@@ -396,15 +447,61 @@ def test_baseline_claims_use_vector_baseline_chunks_only(tmp_path: Path) -> None
                 "returns:v1:0": "The special return window is 45 days."
             }
 
-    judged_path, _ = judge_file(
+    judged_path, review_path = judge_file(
         raw_path,
         results_dir=tmp_path / "results",
         store=FakeStore(),
         timestamp="20261004T140000_000000Z",
+        exclude_ids=["V2"],
+        exclude_reason="synthetic exclusion",
     )
-    systems = json.loads(judged_path.read_text(encoding="utf-8"))["cases"][0][
-        "systems"
-    ]
+    judged = json.loads(judged_path.read_text(encoding="utf-8"))
+    cases = {case["case_id"]: case for case in judged["cases"]}
+    first_systems = cases["V1"]["systems"]
 
-    assert systems["hybrid"]["flagged_tokens"] == ["45 days"]
-    assert systems["baseline"]["flagged_tokens"] == []
+    assert set(first_systems) == {"hybrid", "baseline", "vector_only"}
+    assert first_systems["hybrid"]["flagged_tokens"] == ["45 days"]
+    assert first_systems["baseline"]["flagged_tokens"] == ["45 days"]
+    assert first_systems["vector_only"]["flagged_tokens"] == []
+    assert cases["V2"]["systems"]["vector_only"]["case_pass"] is True
+    assert cases["V3"]["systems"]["vector_only"]["error"] == (
+        "vector_only: unavailable"
+    )
+
+    vector_summary = judged["summary"]["overall"]["vector_only"]
+    assert vector_summary["passes"] == "2/3"
+    assert vector_summary["unsupported_claim_rate"] == "0/3"
+    assert vector_summary["errors"] == "1/3"
+    assert vector_summary["latency_ms"] == {"p50": 17.0, "p95": 21.5}
+    assert vector_summary["mean_cost_per_case"] == pytest.approx(0.02)
+    assert vector_summary["cache_hits"] == "1/2"
+    assert judged["summary"]["categories"]["policy"]["vector_only"][
+        "passes"
+    ] == "2/2"
+    assert judged["summary"]["categories"]["data"]["vector_only"][
+        "errors"
+    ] == "1/1"
+    assert "vector_only passes" in judge._format_summary_table(
+        "Summary",
+        judged["summary"],
+    )
+    adjusted = judged["adjusted_summary"]["overall"]["vector_only"]
+    assert adjusted["passes"] == "1/2"
+    assert adjusted["errors"] == "1/2"
+    assert adjusted["latency_ms"] == {"p50": 12.0, "p95": 12.0}
+    assert adjusted["mean_cost_per_case"] == pytest.approx(0.01)
+
+    with review_path.open(encoding="utf-8", newline="") as source:
+        rows = list(csv.DictReader(source))
+    assert len(rows) == 9
+    assert [row["system"] for row in rows] == [
+        "hybrid",
+        "baseline",
+        "vector_only",
+        "hybrid",
+        "baseline",
+        "vector_only",
+        "hybrid",
+        "baseline",
+        "vector_only",
+    ]

@@ -33,7 +33,7 @@ The service must answer correctly, show where each answer came from, keep every 
 - **Async ingestion:** upload policy documents through a background job, and replace an updated document with no duplicate or outdated chunks.
 - **Safe data access:** read-only database access, a customer can only see their own orders, and bulk-data or write attempts are blocked even if the language model is fooled.
 - **Grounded answers:** if the data or policies do not support an answer, say so.
-- **Measured quality:** compare the hybrid system against a vector-only baseline on a labelled question set.
+- **Measured quality:** compare the hybrid system against LLM-only and vector-only baselines on a labelled question set.
 - **Reliability and observability:** timeouts, retries, a clear fallback on failure, and per-request logs of latency, tokens and estimated cost.
 
 ## 3. Tech Stack
@@ -269,7 +269,7 @@ flowchart LR
 ```
 
 **Evaluation harness**
-- Labelled question set, vector-only baseline, runner that saves raw outputs, and separate judging so results can be re-judged without new LLM calls.
+- Labelled question set, LLM-only and vector-only baselines, a runner that saves raw outputs, and separate judging so results can be re-judged without new LLM calls.
 
 ## 6. Challenges Faced
 
@@ -311,7 +311,7 @@ pytest -q
 | `/ask` endpoint | All route types, blocked requests, cross-customer isolation, ungrounded refusals, LLM failure fallback, input validation | `tests/test_ask_api.py` |
 | Evaluation cases | Schema, unique IDs, category coverage, order IDs exist and belong to the stated customer | `tests/test_eval_cases.py` |
 | Evaluation cache | Opt-in cache miss and hit, disabled-by-default behavior, blank entries treated as misses, blank and failed responses not cached | `tests/test_llm_client.py` |
-| Evaluation baselines | LLM-only helper plus the vector-only comparison: top-four retrieval with no threshold or grounding gate, one answer-model call, and no SQL or customer ID | `tests/test_eval_baseline.py` |
+| Evaluation baselines | LLM-only and vector-only systems; the latter uses top-four retrieval with no threshold or grounding gate, one answer-model call, and no SQL or customer ID | `tests/test_eval_baseline.py` |
 | Evaluation runner | Raw JSONL output, resolved checks and metrics, error continuation and secret redaction, resume and filtering, embedder warm-up, progress and interrupt handling | `tests/test_eval_runner.py` |
 | Evaluation judge | Pass, failure, unsupported-claim and error verdicts; category, latency, cost, degraded and cache summaries; review CSV, adjusted exclusions, CLI output and claim matching | `tests/test_eval_judge.py` |
 
@@ -319,7 +319,7 @@ pytest -q
 
 #### Reproduce the evaluation
 
-This needs a real `GROQ_API_KEY` in `.env` and makes about 80 live Groq calls. The runner enables its response cache, and results go in `eval/results` (see `eval/results/README.md`).
+This needs a real `GROQ_API_KEY` in `.env` and makes live Groq calls for all three systems. The runner enables its response cache, and results go in `eval/results` (see `eval/results/README.md`).
 
 ```bash
 python -m eval.run_eval --sleep 5
@@ -331,6 +331,7 @@ python -m eval.judge eval/results/raw_<timestamp>.jsonl --exclude U05,C07 --excl
 
 **Systems compared.**
 - **Hybrid:** the full `/ask` pipeline.
+- **LLM-only baseline:** one answer-model call with only the question and a generic support prompt.
 - **Vector-only baseline:** the same embedder and policy store retrieve the top four chunks without a distance threshold or grounding gate. The same answer model then makes exactly one call with those excerpts, with **no SQL tools, router or customer ID**.
 
 **How each answer was judged.** Rule-based automatic judge, with no model judge:
@@ -341,9 +342,10 @@ python -m eval.judge eval/results/raw_<timestamp>.jsonl --exclude U05,C07 --excl
 - must-not-contain checks for another customer's name or email domain
 - an answer is **unsupported** if it states a fact that neither the SQL result nor the retrieved chunks contain, or answers a question that should have been refused
 
-**Recorded results (legacy LLM-only baseline).** These checked-in results predate
-the vector-only baseline. A replacement live run is not included in this change;
-the new path is covered with mocked tests and makes no live Groq calls.
+**Recorded results (legacy two-system run).** These checked-in results compare
+the hybrid and LLM-only systems and predate the vector-only third system. A
+replacement live run is not included; the three-system path is covered with
+mocked tests and makes no live Groq calls during the test suite.
 
 | Category | Hybrid passes | Baseline passes | Hybrid unsupported | Baseline unsupported |
 |---|---:|---:|---:|---:|

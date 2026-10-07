@@ -62,10 +62,14 @@ class FakeLLMClient:
             error = RuntimeError(f"mocked router failure {self.api_key}")
             record_llm_call(stage, error=error, model=model, attempts=1)
             raise error
+        if stage == "vector_baseline" and "trigger error" in question.casefold():
+            raise RuntimeError(f"mocked vector failure {self.api_key}")
         if stage == "router":
             text = json.dumps({"route": "data", "reason": "mocked route"})
         elif stage == "answer":
             text = "Mocked hybrid answer."
+        elif stage == "vector_baseline":
+            text = "Mocked vector-only answer."
         else:
             text = (
                 f"Mocked baseline answer with {self.api_key}"
@@ -201,15 +205,22 @@ def test_three_cases_are_saved_as_valid_raw_jsonl_and_errors_continue(
     assert records[0]["evidence_sources"]["sql"]
     assert len(records[0]["hybrid_metrics"]["llm_calls"]) == 2
     assert records[0]["baseline_answer"] == "Mocked baseline answer."
-    assert records[0]["baseline_sources"] == {"chunks": ["returns:v1:0"]}
+    assert records[0]["baseline_sources"] == {"chunks": []}
     assert records[0]["baseline_metrics"]["total_tokens"] == 11
+    assert records[0]["vector_only_answer"] == "Mocked vector-only answer."
+    assert records[0]["vector_only_chunk_ids"] == ["returns:v1:0"]
+    assert records[0]["vector_only_metrics"]["total_tokens"] == 11
+    assert records[0]["vector_only_cache_hit"] is False
     assert records[0]["error"] is None
 
     assert "hybrid: mocked router failure" in records[1]["error"]
+    assert "vector_only: mocked vector failure [REDACTED]" in records[1]["error"]
     assert records[1]["baseline_answer"] == (
         "Mocked baseline answer with [REDACTED]"
     )
+    assert records[1]["vector_only_answer"] is None
     assert records[2]["route"] == "out_of_scope"
+    assert records[2]["vector_only_answer"] == "Mocked vector-only answer."
     assert api_key not in output_path.read_text(encoding="utf-8")
 
 
@@ -310,7 +321,8 @@ def test_progress_uses_stderr_and_stdout_only_contains_output_path(
     assert lines[1] == "[1/1] R1 starting"
     assert re.fullmatch(
         r"\[1/1] R1 data hybrid=ok \d+\.\d{2}s "
-        r"baseline=ok \d+\.\d{2}s cache_hits=0",
+        r"baseline=ok \d+\.\d{2}s "
+        r"vector_only=ok \d+\.\d{2}s cache_hits=0",
         lines[2],
     )
 

@@ -35,7 +35,8 @@ from eval.resolve import check_answer
 
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
-SYSTEMS = ("hybrid", "baseline")
+LEGACY_SYSTEMS = ("hybrid", "baseline")
+SYSTEMS = (*LEGACY_SYSTEMS, "vector_only")
 REFUSAL_CATEGORIES = {"out_of_scope", "unanswerable", "adversarial"}
 _DASHES = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\u00ad"
 _ORDER_ID_RE = re.compile(
@@ -140,10 +141,12 @@ class EvidenceContext:
             if claim.kind == "order_id"
         )
         complete = True
-        sources_key = (
-            "evidence_sources" if system == "hybrid" else "baseline_sources"
-        )
-        sources = record.get(sources_key) or {}
+        if system == "hybrid":
+            sources = record.get("evidence_sources") or {}
+        elif system == "vector_only":
+            sources = {"chunks": record.get("vector_only_chunk_ids") or []}
+        else:
+            sources = {}
 
         for source in sources.get("sql", []):
             try:
@@ -267,6 +270,7 @@ def judge_file(
 ) -> tuple[Path, Path]:
     """Judge one raw JSONL file and write JSON plus a manual-review CSV."""
     records = _read_jsonl(raw_path)
+    systems_to_judge = _systems_for_records(records)
     excluded_case_ids = _normalize_case_ids(exclude_ids or [])
     evidence = EvidenceContext(
         connection=connection,
@@ -277,7 +281,7 @@ def judge_file(
     try:
         for record in records:
             systems = {}
-            for system in SYSTEMS:
+            for system in systems_to_judge:
                 allowed_claims, evidence_complete = evidence.collect(
                     record,
                     system=system,
@@ -309,7 +313,7 @@ def judge_file(
         "source_raw_file": str(raw_path),
         "generated_at_utc": generated_at,
         "cases": verdicts,
-        "summary": _build_summary(records, verdicts),
+        "summary": _build_summary(records, verdicts, systems_to_judge),
     }
     if excluded_case_ids:
         excluded = set(excluded_case_ids)
@@ -323,13 +327,17 @@ def judge_file(
         payload["adjusted_summary"] = {
             "excluded_case_ids": excluded_case_ids,
             "exclude_reason": exclude_reason,
-            **_build_summary(adjusted_records, adjusted_verdicts),
+            **_build_summary(
+                adjusted_records,
+                adjusted_verdicts,
+                systems_to_judge,
+            ),
         }
     judged_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    _write_review_csv(review_path, records, verdicts)
+    _write_review_csv(review_path, records, verdicts, systems_to_judge)
     return judged_path, review_path
 
 
@@ -506,17 +514,18 @@ def _claims_from_computed_facts(facts: dict[str, Any]) -> set[tuple[str, str]]:
 def _build_summary(
     records: list[dict[str, Any]],
     verdicts: list[dict[str, Any]],
+    systems: Sequence[str],
 ) -> dict[str, Any]:
     categories = sorted({str(record.get("category", "")) for record in records})
     return {
         "overall": {
             system: _summarize(records, verdicts, system)
-            for system in SYSTEMS
+            for system in systems
         },
         "categories": {
             category: {
                 system: _summarize(records, verdicts, system, category=category)
-                for system in SYSTEMS
+                for system in systems
             }
             for category in categories
         },
@@ -591,7 +600,7 @@ def _cache_flags(record: dict[str, Any], system: str) -> list[bool]:
             return [bool(item.get("cache_hit")) for item in explicit]
         calls = (record.get("hybrid_metrics") or {}).get("llm_calls", [])
         return [bool(call.get("cache_hit")) for call in calls]
-    value = record.get("baseline_cache_hit")
+    value = record.get(f"{system}_cache_hit")
     return [] if value is None else [bool(value)]
 
 
@@ -627,6 +636,7 @@ def _write_review_csv(
     path: Path,
     records: list[dict[str, Any]],
     verdicts: list[dict[str, Any]],
+    systems: Sequence[str],
 ) -> None:
     fieldnames = [
         "id",
@@ -643,7 +653,7 @@ def _write_review_csv(
         writer = csv.DictWriter(output, fieldnames=fieldnames)
         writer.writeheader()
         for record, verdict in zip(records, verdicts):
-            for system in SYSTEMS:
+            for system in systems:
                 result = verdict["systems"][system]
                 failed = [
                     f"{item['index']}:{item['kind']}"
@@ -749,31 +759,46 @@ def _normalize_case_ids(values: Iterable[str]) -> list[str]:
     )
 
 
+def _systems_for_records(records: list[dict[str, Any]]) -> tuple[str, ...]:
+    has_vector_only = any(
+        any(key.startswith("vector_only_") for key in record)
+        for record in records
+    )
+    return SYSTEMS if has_vector_only else LEGACY_SYSTEMS
+
+
 def _format_summary_table(title: str, summary: dict[str, Any]) -> str:
-    headers = (
-        "category",
-        "hybrid passes",
-        "hybrid unsupported",
-        "baseline passes",
-        "baseline unsupported",
+    systems = [system for system in SYSTEMS if system in summary["overall"]]
+    headers = ("category",) + tuple(
+        heading
+        for system in systems
+        for heading in (f"{system} passes", f"{system} unsupported")
     )
     rows = [
         (
             "overall",
-            summary["overall"]["hybrid"]["passes"],
-            summary["overall"]["hybrid"]["unsupported_claim_rate"],
-            summary["overall"]["baseline"]["passes"],
-            summary["overall"]["baseline"]["unsupported_claim_rate"],
+            *(
+                value
+                for system in systems
+                for value in (
+                    summary["overall"][system]["passes"],
+                    summary["overall"][system]["unsupported_claim_rate"],
+                )
+            ),
         ),
         *(
             (
                 category,
-                systems["hybrid"]["passes"],
-                systems["hybrid"]["unsupported_claim_rate"],
-                systems["baseline"]["passes"],
-                systems["baseline"]["unsupported_claim_rate"],
+                *(
+                    value
+                    for system in systems
+                    for value in (
+                        category_systems[system]["passes"],
+                        category_systems[system]["unsupported_claim_rate"],
+                    )
+                ),
             )
-            for category, systems in summary["categories"].items()
+            for category, category_systems in summary["categories"].items()
         ),
     ]
     widths = [
